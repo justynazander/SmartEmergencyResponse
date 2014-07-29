@@ -9,7 +9,7 @@ The system provides the survivors and the emergency personnel with information t
 
 SERS on YouTube: https://www.youtube.com/watch?v=oofHMaEWwP8
 
-MathWorks products used in SERS: 
+<br> MathWorks products used in SERS: </br>
 
 1. MATLAB.
 
@@ -28,13 +28,14 @@ MathWorks products used in SERS:
 8. Mapping Toolbox used for reading the map shapefiles and pulling in the satellite images.
 
 9. Image Acquisition Toolbox used for face detection of the videostream from the AR.Drone.
- 
 
-Prerequisites: 
+
+<br> Prerequisites: 
 Google Earth. 
 MATLAB version 2014a, 32 bits.
+</br> 
 
-
+<br> 
 SERS team member organizations: 
 BluHaptics,
 Boeing (St. Louis and Seattle),
@@ -45,8 +46,9 @@ North Carolina State University,
 University of North Texas, 
 University of Washington,
 Worcester Polytechnic Institute.
+</br> 
 
-
+<br> 
 SERS MathWorks development foundations: 
 Enes Bilgin (static optimization),
 David Escobar Sanabria (dynamic simulation),
@@ -55,9 +57,9 @@ Aubrey da Cunha (dynamic optimization),
 Poornima Kaniarasu (standalone GEarth interface),
 Pieter J. Mosterman,
 Justyna Zander.
+</br> 
 
-
-Related papers, posters, talks, and books: 
+Related technical papers, posters, talks, and books: 
 
 Justyna Zander, Smart Emergency Response System - Eye in the Sky, Plenary talk, SCS Summer Simulation Multi-Conference, July 2014.
 

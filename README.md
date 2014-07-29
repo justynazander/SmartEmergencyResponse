@@ -1,5 +1,3 @@
-SmartEmergencyResponse
-
 ======================================================
   Smart Emergency Response System in MATLAB/Simulink 
 ======================================================

@@ -1,0 +1,6 @@
+function arms_pr_callback( u )
+    [ustrLat, ustrLon, ustrAlt, ustrHead, ustrTilt, ustrRoll] = stringify6U(u);
+    evalStr = ['pr_lat = ' ustrLat '; pr_lon = ' ustrLon '; pr_alt = '  ustrAlt '; pr_head = ' ustrHead '; pr_tilt = ' ustrTilt '; pr_roll = ' ustrRoll ';'];
+    evalin('base', evalStr);
+end
+

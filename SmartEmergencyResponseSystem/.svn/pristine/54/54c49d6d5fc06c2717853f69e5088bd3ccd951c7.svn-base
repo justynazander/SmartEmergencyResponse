@@ -1,0 +1,12 @@
+imData = imread('SF12.JPG');
+[nodes, graph, deployment] = loadNodeDataFromMapFile('SanFrancisco.map');
+
+GV = GroundVehicleManager(nodes);
+QC = QuadCopterManager;
+RM = RequestManager;
+
+stationOptimizer = PathPlanner;
+quadcopterOptimizer = QuadrotorRoutePlanner;
+
+missionUI(imData,nodes,RM,GV,QC,deployment,graph,stationOptimizer,quadcopterOptimizer);
+

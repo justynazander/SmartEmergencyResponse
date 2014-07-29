@@ -1,0 +1,7 @@
+function arms_gv_callback(u)
+    [ustrLat, ustrLon, ustrAlt, ustrHead, ustrTilt, ustrRoll] = stringify6U(u);
+
+    evalStr = ['gv_lat = ' ustrLat '; gv_lon = ' ustrLon '; gv_alt = '  ustrAlt '; gv_head = ' ustrHead '; gv_tilt = ' ustrTilt '; gv_roll = ' ustrRoll ';'];
+    evalin('base', evalStr);
+end
+

@@ -1,0 +1,63 @@
+classdef Request < handle
+    %REQUEST 
+    
+    properties
+        sender          % Who submitted the request?
+        priority        % Priority 1-high to 10-low
+        dueTime         % When does the vehicle need to arrive?
+        deliverAfter    % ?
+    end
+    
+    properties (SetObservable)
+        location        % Where is the requested location?
+        item            % What service is being requested?
+        isDelivery      % Is it a delivery request?
+        isPickup        % Is it a pick-up request?        
+    end
+    
+    properties (Access = private)
+        locationListener
+        itemListener
+        deliveryListener
+        pickupListener
+    end
+    
+    methods
+        function obj = Request(locationIn,...
+                               itemIn,...
+                               senderIn,...
+                               priorityIn,...
+                               dueTimeIn,...
+                               deliverAfterIn,...
+                               isDeliveryIn,...
+                               isPickupIn)
+            obj.location = locationIn;
+            obj.item = itemIn;
+            obj.sender = senderIn;
+            obj.priority = priorityIn;
+            obj.dueTime = dueTimeIn;
+            obj.deliverAfter = deliverAfterIn;
+            obj.isDelivery = isDeliveryIn;
+            obj.isPickup = isPickupIn;
+            
+            obj.locationListener = addlistener(obj,'location','PostSet',@(~,~)notify(obj,'locationChanged'));
+            obj.itemListener = addlistener(obj,'item','PostSet',@(~,~)notify(obj,'itemChanged'));
+            obj.deliveryListener = addlistener(obj,'isDelivery','PostSet',@(~,~)notify(obj,'deliveryPickupChanged'));
+            obj.pickupListener = addlistener(obj,'isPickup','PostSet',@(~,~)notify(obj,'deliveryPickupChanged'));
+        end
+        
+        function delete(obj)
+            delete(obj.locationListener);
+            delete(obj.itemListener);
+            delete(obj.deliveryListener);
+            delete(obj.pickupListener);
+        end
+    end
+    
+    events
+        itemChanged
+        locationChanged
+        deliveryPickupChanged
+    end
+end
+

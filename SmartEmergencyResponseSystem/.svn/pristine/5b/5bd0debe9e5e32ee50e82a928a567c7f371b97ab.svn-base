@@ -1,0 +1,9 @@
+%%
+[~,QC,KU,~,~,~]=runMission;
+
+%%
+q=QC.getVehicles;
+k=KU.getVehicles;
+
+offset = q.location - k.location;
+addlistener(k,'location','PostSet',@(src,~)q.setLocation(k.location+offset))

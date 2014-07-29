@@ -1,0 +1,2617 @@
+#include "__cf_MultiVehicleModel.h"
+#include <math.h>
+#include "MultiVehicleModel_acc.h"
+#include "MultiVehicleModel_acc_private.h"
+#include <stdio.h>
+#include "simstruc.h"
+#include "fixedpoint.h"
+#define CodeFormat S-Function
+#define AccDefine1 Accelerator_S-Function
+#ifndef __RTW_UTFREE__  
+extern void * utMalloc ( size_t ) ; extern void utFree ( void * ) ;
+#endif
+boolean_T MultiVehicleModel_acc_rt_TDelayUpdateTailOrGrowBuf ( int_T *
+bufSzPtr , int_T * tailPtr , int_T * headPtr , int_T * lastPtr , real_T
+tMinusDelay , real_T * * tBufPtr , real_T * * uBufPtr , real_T * * xBufPtr ,
+boolean_T isfixedbuf , boolean_T istransportdelay , int_T * maxNewBufSzPtr )
+{ int_T testIdx ; int_T tail = * tailPtr ; int_T bufSz = * bufSzPtr ; real_T
+* tBuf = * tBufPtr ; real_T * xBuf = ( NULL ) ; int_T numBuffer = 2 ; if (
+istransportdelay ) { numBuffer = 3 ; xBuf = * xBufPtr ; } testIdx = ( tail <
+( bufSz - 1 ) ) ? ( tail + 1 ) : 0 ; if ( ( tMinusDelay <= tBuf [ testIdx ] )
+&& ! isfixedbuf ) { int_T j ; real_T * tempT ; real_T * tempU ; real_T *
+tempX = ( NULL ) ; real_T * uBuf = * uBufPtr ; int_T newBufSz = bufSz + 1024
+; if ( newBufSz > * maxNewBufSzPtr ) { * maxNewBufSzPtr = newBufSz ; } tempU
+= ( real_T * ) utMalloc ( numBuffer * newBufSz * sizeof ( real_T ) ) ; if (
+tempU == ( NULL ) ) { return ( false ) ; } tempT = tempU + newBufSz ; if (
+istransportdelay ) tempX = tempT + newBufSz ; for ( j = tail ; j < bufSz ; j
+++ ) { tempT [ j - tail ] = tBuf [ j ] ; tempU [ j - tail ] = uBuf [ j ] ; if
+( istransportdelay ) tempX [ j - tail ] = xBuf [ j ] ; } for ( j = 0 ; j <
+tail ; j ++ ) { tempT [ j + bufSz - tail ] = tBuf [ j ] ; tempU [ j + bufSz -
+tail ] = uBuf [ j ] ; if ( istransportdelay ) tempX [ j + bufSz - tail ] =
+xBuf [ j ] ; } if ( * lastPtr > tail ) { * lastPtr -= tail ; } else { *
+lastPtr += ( bufSz - tail ) ; } * tailPtr = 0 ; * headPtr = bufSz ; utFree (
+uBuf ) ; * bufSzPtr = newBufSz ; * tBufPtr = tempT ; * uBufPtr = tempU ; if (
+istransportdelay ) * xBufPtr = tempX ; } else { * tailPtr = testIdx ; }
+return ( true ) ; } void CalcAtmosCOESA ( const real_T * altitude , real_T *
+temp , real_T * pressure , real_T * density , real_T * speedofsound , real_T
+* temperature76 , real_T * pressureRatio76 , int_T numPoints ) { int_T i ;
+for ( i = 0 ; i < numPoints ; i ++ ) { int_T bottom = 0 ; int_T top =
+NUM1976PTS - 1 ; int_T idx ; if ( altitude [ i ] <= altitude76 [ bottom ] ) {
+idx = bottom ; } else if ( altitude [ i ] >= altitude76 [ top ] ) { idx =
+NUM1976PTS - 2 ; } else { for ( ; ; ) { idx = ( bottom + top ) / 2 ; if (
+altitude [ i ] < altitude76 [ idx ] ) { top = idx - 1 ; } else if ( altitude
+[ i ] >= altitude76 [ idx + 1 ] ) { bottom = idx + 1 ; } else { break ; } } }
+if ( tempGradient76 [ idx ] != 0.0 ) { temp [ i ] = temperature76 [ idx ] +
+tempGradient76 [ idx ] * ( altitude [ i ] - altitude76 [ idx ] ) ; pressure [
+i ] = PRESSURE0 * pressureRatio76 [ idx ] * muDoubleScalarPower (
+temperature76 [ idx ] / temp [ i ] , GMR / tempGradient76 [ idx ] ) ; } else
+{ temp [ i ] = temperature76 [ idx ] ; pressure [ i ] = PRESSURE0 *
+pressureRatio76 [ idx ] * muDoubleScalarExp ( ( - GMR ) * ( altitude [ i ] -
+altitude76 [ idx ] ) / temperature76 [ idx ] ) ; } density [ i ] = pressure [
+i ] / ( ( R_HAT / MOL_WT ) * temp [ i ] ) ; speedofsound [ i ] =
+muDoubleScalarSqrt ( GAMMA * temp [ i ] * ( R_HAT / MOL_WT ) ) ; } } void
+wgs84_taylor_series ( real_T * h , real_T * phi , real_T opt_m2ft , real_T *
+y , int_T k ) { real_T gamma_ts , m , sinphi , sin2phi ; int_T i ; for ( i =
+0 ; i < k ; i ++ ) { sinphi = muDoubleScalarSin ( phi [ i ] ) ; sin2phi =
+sinphi * sinphi ; gamma_ts = ( WGS84_G_E ) * ( 1.0 + ( WGS84_K ) * sin2phi )
+/ ( muDoubleScalarSqrt ( 1.0 - ( WGS84_E_2 ) * sin2phi ) ) ; m = ( WGS84_A )
+* ( WGS84_A ) * ( WGS84_B ) * ( WGS84_W_DEF ) * ( WGS84_W_DEF ) / (
+WGS84_GM_DEF ) ; y [ i ] = opt_m2ft * gamma_ts * ( 1.0 - 2.0 * ( 1.0 + 1.0 /
+( WGS84_INV_F ) + m - 2.0 * sin2phi / ( WGS84_INV_F ) ) * h [ i ] / ( WGS84_A
+) + 3.0 * h [ i ] * h [ i ] / ( ( WGS84_A ) * ( WGS84_A ) ) ) ; } } real_T
+MultiVehicleModel_acc_rt_TDelayInterpolate ( real_T tMinusDelay , real_T
+tStart , real_T * tBuf , real_T * uBuf , int_T bufSz , int_T * lastIdx ,
+int_T oldestIdx , int_T newIdx , real_T initOutput , boolean_T discrete ,
+boolean_T minorStepAndTAtLastMajorOutput ) { int_T i ; real_T yout , t1 , t2
+, u1 , u2 ; if ( ( newIdx == 0 ) && ( oldestIdx == 0 ) && ( tMinusDelay >
+tStart ) ) return initOutput ; if ( tMinusDelay <= tStart ) return initOutput
+; if ( ( tMinusDelay <= tBuf [ oldestIdx ] ) ) { if ( discrete ) { return (
+uBuf [ oldestIdx ] ) ; } else { int_T tempIdx = oldestIdx + 1 ; if (
+oldestIdx == bufSz - 1 ) tempIdx = 0 ; t1 = tBuf [ oldestIdx ] ; t2 = tBuf [
+tempIdx ] ; u1 = uBuf [ oldestIdx ] ; u2 = uBuf [ tempIdx ] ; if ( t2 == t1 )
+{ if ( tMinusDelay >= t2 ) { yout = u2 ; } else { yout = u1 ; } } else {
+real_T f1 = ( t2 - tMinusDelay ) / ( t2 - t1 ) ; real_T f2 = 1.0 - f1 ; yout
+= f1 * u1 + f2 * u2 ; } return yout ; } } if ( minorStepAndTAtLastMajorOutput
+) { if ( newIdx != 0 ) { if ( * lastIdx == newIdx ) { ( * lastIdx ) -- ; }
+newIdx -- ; } else { if ( * lastIdx == newIdx ) { * lastIdx = bufSz - 1 ; }
+newIdx = bufSz - 1 ; } } i = * lastIdx ; if ( tBuf [ i ] < tMinusDelay ) {
+while ( tBuf [ i ] < tMinusDelay ) { if ( i == newIdx ) break ; i = ( i < (
+bufSz - 1 ) ) ? ( i + 1 ) : 0 ; } } else { while ( tBuf [ i ] >= tMinusDelay
+) { i = ( i > 0 ) ? i - 1 : ( bufSz - 1 ) ; } i = ( i < ( bufSz - 1 ) ) ? ( i
++ 1 ) : 0 ; } * lastIdx = i ; if ( discrete ) { double tempEps = (
+DBL_EPSILON ) * 128.0 ; double localEps = tempEps * muDoubleScalarAbs ( tBuf
+[ i ] ) ; if ( tempEps > localEps ) { localEps = tempEps ; } localEps =
+localEps / 2.0 ; if ( tMinusDelay >= ( tBuf [ i ] - localEps ) ) { yout =
+uBuf [ i ] ; } else { if ( i == 0 ) { yout = uBuf [ bufSz - 1 ] ; } else {
+yout = uBuf [ i - 1 ] ; } } } else { if ( i == 0 ) { t1 = tBuf [ bufSz - 1 ]
+; u1 = uBuf [ bufSz - 1 ] ; } else { t1 = tBuf [ i - 1 ] ; u1 = uBuf [ i - 1
+] ; } t2 = tBuf [ i ] ; u2 = uBuf [ i ] ; if ( t2 == t1 ) { if ( tMinusDelay
+>= t2 ) { yout = u2 ; } else { yout = u1 ; } } else { real_T f1 = ( t2 -
+tMinusDelay ) / ( t2 - t1 ) ; real_T f2 = 1.0 - f1 ; yout = f1 * u1 + f2 * u2
+; } } return ( yout ) ; } uint32_T plook_bincpa ( real_T u , const real_T bp
+[ ] , uint32_T maxIndex , real_T * fraction , uint32_T * prevIndex ) {
+uint32_T bpIndex ; uint32_T startIndex ; if ( u <= bp [ 0U ] ) { bpIndex = 0U
+; * fraction = 0.0 ; } else if ( u < bp [ maxIndex ] ) { startIndex = *
+prevIndex ; bpIndex = binsearch_u32d_prevIdx ( u , bp , startIndex , maxIndex
+) ; * fraction = ( u - bp [ bpIndex ] ) / ( bp [ bpIndex + 1U ] - bp [
+bpIndex ] ) ; } else { bpIndex = maxIndex ; * fraction = 0.0 ; } * prevIndex
+= bpIndex ; return bpIndex ; } real_T intrp2d_la_pw ( const uint32_T bpIndex
+[ ] , const real_T frac [ ] , const real_T table [ ] , uint32_T stride ,
+const uint32_T maxIndex [ ] ) { real_T y ; real_T yL_1d ; real_T yR_1d ;
+uint32_T offset_1d ; offset_1d = bpIndex [ 1U ] * stride + bpIndex [ 0U ] ;
+if ( bpIndex [ 0U ] == maxIndex [ 0U ] ) { yL_1d = table [ offset_1d ] ; }
+else { yL_1d = ( table [ offset_1d + 1U ] - table [ offset_1d ] ) * frac [ 0U
+] + table [ offset_1d ] ; } if ( bpIndex [ 1U ] == maxIndex [ 1U ] ) { y =
+yL_1d ; } else { offset_1d += stride ; if ( bpIndex [ 0U ] == maxIndex [ 0U ]
+) { yR_1d = table [ offset_1d ] ; } else { yR_1d = ( table [ offset_1d + 1U ]
+- table [ offset_1d ] ) * frac [ 0U ] + table [ offset_1d ] ; } y = ( yR_1d -
+yL_1d ) * frac [ 1U ] + yL_1d ; } return y ; } uint32_T
+binsearch_u32d_prevIdx ( real_T u , const real_T bp [ ] , uint32_T startIndex
+, uint32_T maxIndex ) { uint32_T iRght ; uint32_T iLeft ; uint32_T bpIdx ;
+uint32_T found ; bpIdx = startIndex ; iLeft = 0U ; iRght = maxIndex ; found =
+0U ; while ( found == 0U ) { if ( u < bp [ bpIdx ] ) { iRght = bpIdx - 1U ;
+bpIdx = ( iRght + iLeft ) >> 1U ; } else if ( u < bp [ bpIdx + 1U ] ) { found
+= 1U ; } else { iLeft = bpIdx + 1U ; bpIdx = ( iRght + iLeft ) >> 1U ; } }
+return bpIdx ; } void lrp1efvmp1 ( const real_T hbvbggl05o [ 300 ] ,
+olv1gstxld * localB , nephd1lxln * localDW , kljb3jfx1k * localP ) { real_T
+giu5ad4ada ; real_T ec2ji1kjyp ; real_T bflo1oovf1 ; uint8_T kwuthrgs4j ;
+real_T fk51f1pf32 ; real_T avnrrkfpae ; real_T tmp ; real_T d22mhksyxw_idx_0
+; localDW -> d0o3rxwkwd = 0 ; while ( localDW -> d0o3rxwkwd < 100 ) { if (
+muDoubleScalarAbs ( hbvbggl05o [ 3 * localDW -> d0o3rxwkwd ] ) > localP ->
+caerwfkxfe . P_5 ) { giu5ad4ada = muDoubleScalarMod ( hbvbggl05o [ 3 *
+localDW -> d0o3rxwkwd ] + localP -> caerwfkxfe . P_2 , localP -> caerwfkxfe .
+P_3 ) + localP -> caerwfkxfe . P_4 ; } else { giu5ad4ada = hbvbggl05o [ 3 *
+localDW -> d0o3rxwkwd ] ; } ec2ji1kjyp = muDoubleScalarAbs ( giu5ad4ada ) ;
+kwuthrgs4j = ( uint8_T ) ( ec2ji1kjyp > localP -> caerwfkxfe . P_9 ) ; if (
+kwuthrgs4j > localP -> caerwfkxfe . P_29 ) { giu5ad4ada = ( ( ec2ji1kjyp +
+localP -> caerwfkxfe . P_6 ) * localP -> caerwfkxfe . P_7 + localP ->
+caerwfkxfe . P_8 ) * muDoubleScalarSign ( giu5ad4ada ) ; } if ( kwuthrgs4j >
+localP -> caerwfkxfe . P_30 ) { ec2ji1kjyp = localP -> caerwfkxfe . P_10 ; }
+else { ec2ji1kjyp = localP -> caerwfkxfe . P_11 ; } bflo1oovf1 = hbvbggl05o [
+3 * localDW -> d0o3rxwkwd + 1 ] + ec2ji1kjyp ; d22mhksyxw_idx_0 = (
+giu5ad4ada - localP -> caerwfkxfe . P_1 [ 0 ] ) * localP -> caerwfkxfe . P_16
+; if ( muDoubleScalarAbs ( bflo1oovf1 ) > localP -> caerwfkxfe . P_15 ) { tmp
+= muDoubleScalarMod ( bflo1oovf1 + localP -> caerwfkxfe . P_12 , localP ->
+caerwfkxfe . P_13 ) + localP -> caerwfkxfe . P_14 ; } else { tmp = bflo1oovf1
+; } fk51f1pf32 = localP -> caerwfkxfe . P_22 - localP -> caerwfkxfe . P_21 ;
+ec2ji1kjyp = muDoubleScalarSqrt ( localP -> caerwfkxfe . P_20 - fk51f1pf32 *
+fk51f1pf32 ) ; avnrrkfpae = localP -> caerwfkxfe . P_24 * localP ->
+caerwfkxfe . P_23 ; fk51f1pf32 = muDoubleScalarSin ( avnrrkfpae ) ;
+giu5ad4ada = localP -> caerwfkxfe . P_19 - ec2ji1kjyp * ec2ji1kjyp *
+fk51f1pf32 * fk51f1pf32 ; bflo1oovf1 = localP -> caerwfkxfe . P_18 /
+muDoubleScalarSqrt ( giu5ad4ada ) ; fk51f1pf32 = d22mhksyxw_idx_0 /
+muDoubleScalarAtan2 ( localP -> caerwfkxfe . P_17 , ( localP -> caerwfkxfe .
+P_25 - ec2ji1kjyp * ec2ji1kjyp ) * bflo1oovf1 / giu5ad4ada ) ;
+muDoubleScalarSinCos ( localP -> caerwfkxfe . P_27 * localP -> caerwfkxfe .
+P_26 , & ec2ji1kjyp , & giu5ad4ada ) ; avnrrkfpae = 1.0 / muDoubleScalarAtan2
+( localP -> caerwfkxfe . P_28 , bflo1oovf1 * muDoubleScalarCos ( avnrrkfpae )
+) * ( ( tmp - localP -> caerwfkxfe . P_1 [ 1 ] ) * localP -> caerwfkxfe .
+P_16 ) ; bflo1oovf1 = fk51f1pf32 * giu5ad4ada + avnrrkfpae * ec2ji1kjyp ;
+avnrrkfpae = avnrrkfpae * giu5ad4ada - fk51f1pf32 * ec2ji1kjyp ; localB ->
+fodp0k1wmj [ 3 * localDW -> d0o3rxwkwd ] = bflo1oovf1 ; localB -> fodp0k1wmj
+[ 1 + 3 * localDW -> d0o3rxwkwd ] = avnrrkfpae ; localB -> fodp0k1wmj [ 2 + 3
+* localDW -> d0o3rxwkwd ] = - ( hbvbggl05o [ 3 * localDW -> d0o3rxwkwd + 2 ]
++ localP -> caerwfkxfe . P_0 ) ; localDW -> d0o3rxwkwd ++ ; } } void
+anq55orn2j ( SimStruct * const S ) { } void ge2n33wzlq ( bw1rqnuzxz * localP
+, ogd05noz2v * localX ) { localX -> nd4hq3hzk1 = localP -> P_1 ; } void
+hhpy1jenry ( pp3iplrmnr * localDW ) { localDW -> gmpj3fzvis = false ; } void
+gamgx1mju3 ( SimStruct * const S , boolean_T atvgqiuycn , mwyxnu3o3s * localB
+, pp3iplrmnr * localDW , bw1rqnuzxz * localP , ogd05noz2v * localX ) { if (
+ssIsSampleHit ( S , 1 , 0 ) && ssIsMajorTimeStep ( S ) ) { if ( atvgqiuycn )
+{ if ( ! localDW -> gmpj3fzvis ) { ge2n33wzlq ( localP , localX ) ; localDW
+-> gmpj3fzvis = true ; } } else { if ( localDW -> gmpj3fzvis ) { hhpy1jenry (
+localDW ) ; } } } if ( localDW -> gmpj3fzvis ) { if ( localX -> nd4hq3hzk1 >=
+localP -> P_2 ) { if ( localX -> nd4hq3hzk1 != localP -> P_2 ) { localX ->
+nd4hq3hzk1 = localP -> P_2 ; ssSetSolverNeedsReset ( S ) ; } } else if (
+localX -> nd4hq3hzk1 <= localP -> P_3 ) { if ( localX -> nd4hq3hzk1 != localP
+-> P_3 ) { localX -> nd4hq3hzk1 = localP -> P_3 ; ssSetSolverNeedsReset ( S )
+; } } localB -> nulslvd1ds = localX -> nd4hq3hzk1 ; if ( ssIsMajorTimeStep (
+S ) ) { srUpdateBC ( localDW -> h4mjzxg4bn ) ; } } } void mn1012evq4 (
+pp3iplrmnr * localDW ) { if ( localDW -> gmpj3fzvis ) { } } void bdg4dfoelg (
+real_T b1315upiar , pp3iplrmnr * localDW , bw1rqnuzxz * localP , ogd05noz2v *
+localX , khi5eapfzb * localXdot ) { if ( localDW -> gmpj3fzvis ) { {
+boolean_T lsat ; boolean_T usat ; lsat = ( localX -> nd4hq3hzk1 <= localP ->
+P_3 ) ; usat = ( localX -> nd4hq3hzk1 >= localP -> P_2 ) ; if ( ( ! lsat && !
+usat ) || ( lsat && ( b1315upiar > 0 ) ) || ( usat && ( b1315upiar < 0 ) ) )
+{ localXdot -> nd4hq3hzk1 = b1315upiar ; } else { localXdot -> nd4hq3hzk1 =
+0.0 ; } } } else { localXdot -> nd4hq3hzk1 = 0.0 ; } } void olmlwlyikl (
+SimStruct * const S ) { } real_T rt_urand_Upu32_Yd_f_pw_snf ( uint32_T * u )
+{ uint32_T lo ; uint32_T hi ; lo = * u % 127773U * 16807U ; hi = * u /
+127773U * 2836U ; if ( lo < hi ) { * u = 2147483647U - ( hi - lo ) ; } else {
+* u = lo - hi ; } return ( real_T ) * u * 4.6566128752457969E-10 ; } real_T
+rt_nrand_Upu32_Yd_f_pw_snf ( uint32_T * u ) { real_T y ; real_T sr ; real_T
+si ; do { sr = 2.0 * rt_urand_Upu32_Yd_f_pw_snf ( u ) - 1.0 ; si = 2.0 *
+rt_urand_Upu32_Yd_f_pw_snf ( u ) - 1.0 ; si = sr * sr + si * si ; } while (
+si > 1.0 ) ; y = muDoubleScalarSqrt ( - 2.0 * muDoubleScalarLog ( si ) / si )
+* sr ; return y ; } void rt_mrdivide_U1d1x3_U2d3x3_Yd1x3_snf ( const real_T
+u0 [ 3 ] , const real_T u1 [ 9 ] , real_T y [ 3 ] ) { real_T A [ 9 ] ;
+int32_T r1 ; int32_T r2 ; int32_T r3 ; real_T maxval ; real_T a21 ; int32_T
+rtemp ; memcpy ( & A [ 0 ] , & u1 [ 0 ] , 9U * sizeof ( real_T ) ) ; r1 = 1 ;
+r2 = 2 ; r3 = 3 ; maxval = muDoubleScalarAbs ( u1 [ 0 ] ) ; a21 =
+muDoubleScalarAbs ( u1 [ 1 ] ) ; if ( a21 > maxval ) { maxval = a21 ; r1 = 2
+; r2 = 1 ; } if ( muDoubleScalarAbs ( u1 [ 2 ] ) > maxval ) { r1 = 3 ; r2 = 2
+; r3 = 1 ; } A [ r2 - 1 ] = u1 [ r2 - 1 ] / u1 [ r1 - 1 ] ; A [ r3 - 1 ] /= A
+[ r1 - 1 ] ; A [ r2 + 2 ] -= A [ r2 - 1 ] * A [ r1 + 2 ] ; A [ r3 + 2 ] -= A
+[ r3 - 1 ] * A [ r1 + 2 ] ; A [ r2 + 5 ] -= A [ r2 - 1 ] * A [ r1 + 5 ] ; A [
+r3 + 5 ] -= A [ r3 - 1 ] * A [ r1 + 5 ] ; if ( muDoubleScalarAbs ( A [ r3 + 2
+] ) > muDoubleScalarAbs ( A [ r2 + 2 ] ) ) { rtemp = r2 ; r2 = r3 ; r3 =
+rtemp ; } A [ r3 + 2 ] /= A [ r2 + 2 ] ; A [ r3 + 5 ] -= A [ r3 + 2 ] * A [
+r2 + 5 ] ; y [ r1 - 1 ] = u0 [ 0 ] / A [ r1 - 1 ] ; y [ r2 - 1 ] = u0 [ 1 ] -
+y [ r1 - 1 ] * A [ r1 + 2 ] ; y [ r3 - 1 ] = u0 [ 2 ] - y [ r1 - 1 ] * A [ r1
++ 5 ] ; y [ r2 - 1 ] /= A [ r2 + 2 ] ; y [ r3 - 1 ] -= y [ r2 - 1 ] * A [ r2
++ 5 ] ; y [ r3 - 1 ] /= A [ r3 + 5 ] ; y [ r2 - 1 ] -= y [ r3 - 1 ] * A [ r3
++ 2 ] ; y [ r1 - 1 ] -= y [ r3 - 1 ] * A [ r3 - 1 ] ; y [ r1 - 1 ] -= y [ r2
+- 1 ] * A [ r2 - 1 ] ; } static void mdlOutputs ( SimStruct * S , int_T tid )
+{ real_T nosdiig03u [ 169 ] ; real_T augykoos5l [ 169 ] ; real_T msy4xojx4u [
+4 ] ; real_T cer2wchkb3 ; real_T p0qnh2wrim [ 3 ] ; real_T f03gfuzt3a ;
+real_T d4ajp443jd ; real_T egqvaqn2aq ; real_T iuixc4td42 ; real_T ezloddc3bo
+; real_T n5bcvxwpc1 ; real_T dl53eqxcnz ; real_T bfhkqs4n5c ; boolean_T
+o2xdurj54y ; real_T ljakha3p0t [ 300 ] ; real_T a2wn4uspir [ 300 ] ; real_T
+tmp [ 3 ] ; real_T tmp_p [ 3 ] ; real_T tmp_e [ 3 ] ; real_T jbe23ejmq4 [ 6 ]
+; real_T dji2o12wzn ; real_T i5s0bgfbyv ; uint32_T fph4c4pnan ; real_T
+l4uine0f5r ; real_T k2pgjttwjz ; real_T cnkhciwxyc ; real_T kq2lyhvs2k ;
+real_T dclw24just ; real_T moyzuytyxz ; real_T p4gomrxwts ; real_T glbkg2z2pc
+; real_T j4y5quitjt ; real_T j4aqh4ovvp ; real_T phxjodriat ; real_T
+pydf4ae103 ; real_T cqc1jds2od ; boolean_T lwtpwyeioi ; real_T ht1jy4ffdq ;
+boolean_T lwz1urnuzn ; boolean_T e34g13vyp1 ; boolean_T ggd4siidnl ; real_T
+g5o314ttux [ 3 ] ; real_T hg4dcusulx ; uint8_T p1z2cd4cvp ; real_T ewjdtgxpyu
+; real_T pg4naehcgd ; real_T eog11ippyj ; real_T fy45xp05wx ; real_T
+fs1e1q0jmn ; real_T pl4jpj0hcq ; real_T bhgkwh20ck [ 3 ] ; real_T dw55yfpcss
+[ 3 ] ; real_T gdgwwi2lmx [ 9 ] ; real_T kga4k1wepx ; real_T pj5dx0krjn [ 3 ]
+; real_T peirsr4iz0 [ 3 ] ; int32_T s214_iter ; int8_T rtAction ; real_T
+mnz5fs4iuo [ 3 ] ; real_T pjk02b11oj [ 3 ] ; real_T iabk2erc5l ; int32_T
+s263_iter ; real_T oqfpopasi5 [ 11 ] ; real_T po2mgfbnrk [ 11 ] ; int32_T
+bqwaymbknz ; int32_T s222_iter ; int32_T g02w4biiea ; real_T l4b0e1ozlo [ 13
+] ; int32_T gjwdsuon2d ; real_T frac [ 2 ] ; uint32_T bpIndex [ 2 ] ; real_T
+kb4gbgtxnr [ 18 ] ; int32_T i ; real_T opyvqjfch4 [ 3 ] ; real_T tmp_i [ 3 ]
+; real_T tmp_m [ 13 ] ; boolean_T tmp_g ; boolean_T tmp_j ; real_T
+i2wxug2o5z_idx_2 ; real_T hie5vwg0j5_idx_1 ; real_T m3rmhklpup_idx_0 ; real_T
+m3rmhklpup_idx_1 ; int32_T fnrnpu4ie4_idx_0 ; int32_T fnrnpu4ie4_idx_1 ;
+int32_T iqi3zgx1ez_idx_1 ; real_T brnqslniho_idx_0 ; real_T brnqslniho_idx_1
+; real_T brnqslniho_idx_2 ; real_T dfjrsfkrzj_idx_0 ; real_T dfjrsfkrzj_idx_1
+; real_T dfjrsfkrzj_idx_2 ; int64_T tmp_f ; int64_T tmp_c ; int64_T tmp_k ;
+real_T tmp_b ; n3qi1whofz * _rtB ; loikxjbxjg * _rtP ; f1xhd02yjc * _rtX ;
+ew10rzwqr2 * _rtDW ; _rtDW = ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) ; _rtX
+= ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) ; _rtP = ( ( loikxjbxjg * )
+ssGetDefaultParam ( S ) ) ; _rtB = ( ( n3qi1whofz * ) _ssGetBlockIO ( S ) ) ;
+if ( ssIsSampleHit ( S , 1 , 0 ) ) { ssCallAccelRunBlock ( S , 57 , 0 ,
+SS_CALL_MDL_OUTPUTS ) ; ssCallAccelRunBlock ( S , 57 , 1 ,
+SS_CALL_MDL_OUTPUTS ) ; _rtB -> gwopvjsamg [ 0 ] = _rtP -> P_0 [ 0 ] ; _rtB
+-> gwopvjsamg [ 1 ] = _rtP -> P_0 [ 1 ] ; _rtB -> gwopvjsamg [ 2 ] = _rtP ->
+P_0 [ 2 ] ; ssCallAccelRunBlock ( S , 7 , 0 , SS_CALL_MDL_OUTPUTS ) ; for ( i
+= 0 ; i < 6 ; i ++ ) { _rtB -> kity0pstnv [ i ] = _rtP -> P_1 [ i ] ; } }
+_rtDW -> bpzo543yxr = 0 ; while ( _rtDW -> bpzo543yxr < 3 ) {
+ssCallAccelCopyCacheForIIS ( S , 5 , ( void * ) 1 ) ; for ( i = 0 ; i < 100 ;
+i ++ ) { a2wn4uspir [ 3 * i ] = _rtB -> a403tlsu5c [ 3 * i + 300 * _rtDW ->
+bpzo543yxr ] ; a2wn4uspir [ 1 + 3 * i ] = _rtB -> a403tlsu5c [ ( 3 * i + 300
+* _rtDW -> bpzo543yxr ) + 1 ] ; a2wn4uspir [ 2 + 3 * i ] = _rtB -> a403tlsu5c
+[ ( 3 * i + 300 * _rtDW -> bpzo543yxr ) + 2 ] ; } _rtB -> kbid4ztlyb [ 0 ] =
+_rtB -> kity0pstnv [ _rtDW -> bpzo543yxr << 1 ] ; _rtB -> kbid4ztlyb [ 1 ] =
+_rtB -> kity0pstnv [ ( _rtDW -> bpzo543yxr << 1 ) + 1 ] ; _rtB -> aaudqhh00f
+= _rtB -> jxgvc3ym2b [ _rtDW -> bpzo543yxr ] ; if ( ssIsSampleHit ( S , 1 , 0
+) ) { lrp1efvmp1 ( a2wn4uspir , & _rtB -> caerwfkxfe [ 0 ] . lrp1efvmp1z , &
+_rtDW -> caerwfkxfe [ 0 ] . lrp1efvmp1z , ( kljb3jfx1k * ) & _rtP ->
+caerwfkxfe . lrp1efvmp1z ) ; _rtB -> caerwfkxfe [ 0 ] . nd3opxaiog = _rtP ->
+caerwfkxfe . P_0 ; } if ( _rtDW -> caerwfkxfe [ 0 ] . hjm4gwoouy .
+IcNeedsLoading ) { ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfe [
+( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> bpzo543yxr ] . eohuwdncyi [ 0 ]
+= _rtB -> kbid4ztlyb [ 0 ] ; ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) ->
+caerwfkxfe [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> bpzo543yxr ] .
+eohuwdncyi [ 1 ] = _rtB -> kbid4ztlyb [ 1 ] ; ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfe [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S
+) ) -> bpzo543yxr ] . eohuwdncyi [ 2 ] = _rtB -> caerwfkxfe [ 0 ] .
+nd3opxaiog ; } _rtB -> caerwfkxfe [ 0 ] . jhj3xqdp44 [ 0 ] = ( ( f1xhd02yjc *
+) ssGetContStates ( S ) ) -> caerwfkxfe [ ( ( ew10rzwqr2 * ) ssGetRootDWork (
+S ) ) -> bpzo543yxr ] . eohuwdncyi [ 0 ] ; _rtB -> caerwfkxfe [ 0 ] .
+jhj3xqdp44 [ 1 ] = ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfe [
+( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> bpzo543yxr ] . eohuwdncyi [ 1 ]
+; _rtB -> caerwfkxfe [ 0 ] . jhj3xqdp44 [ 2 ] = ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfe [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S
+) ) -> bpzo543yxr ] . eohuwdncyi [ 2 ] ; ssCallAccelRunBlock ( S , 1 , 0 ,
+SS_CALL_MDL_OUTPUTS ) ; _rtB -> caerwfkxfe [ 0 ] . bj13bsqkpx = 0.0 ; _rtB ->
+caerwfkxfe [ 0 ] . bj13bsqkpx += _rtP -> caerwfkxfe . P_1 * _rtB ->
+caerwfkxfe [ 0 ] . i4dpwdbox2 ; hie5vwg0j5_idx_1 = _rtB -> caerwfkxfe [ 0 ] .
+bj13bsqkpx ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfe [ 0 ] .
+l0uywpcbts [ 0 ] = _rtP -> caerwfkxfe . P_2 [ 0 ] ; _rtB -> caerwfkxfe [ 0 ]
+. l0uywpcbts [ 1 ] = _rtP -> caerwfkxfe . P_2 [ 1 ] ; muDoubleScalarSinCos (
+_rtP -> caerwfkxfe . P_4 * _rtP -> caerwfkxfe . P_3 , & _rtB -> caerwfkxfe [
+0 ] . ajhmvy5vos , & _rtB -> caerwfkxfe [ 0 ] . ogviq23brw ) ; kga4k1wepx =
+_rtP -> caerwfkxfe . P_10 - _rtP -> caerwfkxfe . P_9 ; fy45xp05wx =
+muDoubleScalarSqrt ( _rtP -> caerwfkxfe . P_8 - kga4k1wepx * kga4k1wepx ) ;
+hg4dcusulx = _rtP -> caerwfkxfe . P_12 * _rtP -> caerwfkxfe . P_11 ;
+kga4k1wepx = muDoubleScalarSin ( hg4dcusulx ) ; kga4k1wepx = _rtP ->
+caerwfkxfe . P_7 - fy45xp05wx * fy45xp05wx * kga4k1wepx * kga4k1wepx ;
+fs1e1q0jmn = _rtP -> caerwfkxfe . P_6 / muDoubleScalarSqrt ( kga4k1wepx ) ;
+_rtB -> caerwfkxfe [ 0 ] . gkqc5fqjwt = muDoubleScalarAtan2 ( _rtP ->
+caerwfkxfe . P_5 , ( _rtP -> caerwfkxfe . P_13 - fy45xp05wx * fy45xp05wx ) *
+fs1e1q0jmn / kga4k1wepx ) ; _rtB -> caerwfkxfe [ 0 ] . hlseod05s5 =
+muDoubleScalarAtan2 ( _rtP -> caerwfkxfe . P_14 , fs1e1q0jmn *
+muDoubleScalarCos ( hg4dcusulx ) ) ; } m3rmhklpup_idx_0 = ( _rtB ->
+caerwfkxfe [ 0 ] . jhj3xqdp44 [ 0 ] * _rtB -> caerwfkxfe [ 0 ] . ogviq23brw -
+_rtB -> caerwfkxfe [ 0 ] . jhj3xqdp44 [ 1 ] * _rtB -> caerwfkxfe [ 0 ] .
+ajhmvy5vos ) * _rtB -> caerwfkxfe [ 0 ] . gkqc5fqjwt * _rtP -> caerwfkxfe .
+P_15 + _rtB -> caerwfkxfe [ 0 ] . l0uywpcbts [ 0 ] ; if ( ssIsSampleHit ( S ,
+1 , 0 ) ) { _rtB -> caerwfkxfe [ 0 ] . pmj2va5urp = _rtP -> caerwfkxfe . P_17
+; } if ( muDoubleScalarAbs ( m3rmhklpup_idx_0 ) > _rtP -> caerwfkxfe . P_19 )
+{ kga4k1wepx = muDoubleScalarMod ( m3rmhklpup_idx_0 + _rtP -> caerwfkxfe .
+P_16 , _rtB -> caerwfkxfe [ 0 ] . pmj2va5urp ) + _rtP -> caerwfkxfe . P_18 ;
+} else { kga4k1wepx = m3rmhklpup_idx_0 ; } fy45xp05wx = muDoubleScalarAbs (
+kga4k1wepx ) ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfe [ 0 ]
+. gy5c32ilwi = _rtP -> caerwfkxfe . P_23 ; } p1z2cd4cvp = ( uint8_T ) (
+fy45xp05wx > _rtB -> caerwfkxfe [ 0 ] . gy5c32ilwi ) ; if ( p1z2cd4cvp > _rtP
+-> caerwfkxfe . P_40 ) { kga4k1wepx = ( ( fy45xp05wx + _rtP -> caerwfkxfe .
+P_20 ) * _rtP -> caerwfkxfe . P_21 + _rtP -> caerwfkxfe . P_22 ) *
+muDoubleScalarSign ( kga4k1wepx ) ; } if ( ssIsSampleHit ( S , 1 , 0 ) ) {
+_rtB -> caerwfkxfe [ 0 ] . hpd4zahte4 = _rtP -> caerwfkxfe . P_24 ; _rtB ->
+caerwfkxfe [ 0 ] . iotzxgppvo = _rtP -> caerwfkxfe . P_25 ; } if ( p1z2cd4cvp
+> _rtP -> caerwfkxfe . P_41 ) { j4aqh4ovvp = _rtB -> caerwfkxfe [ 0 ] .
+hpd4zahte4 ; } else { j4aqh4ovvp = _rtB -> caerwfkxfe [ 0 ] . iotzxgppvo ; }
+fy45xp05wx = ( ( _rtB -> caerwfkxfe [ 0 ] . jhj3xqdp44 [ 0 ] * _rtB ->
+caerwfkxfe [ 0 ] . ajhmvy5vos + _rtB -> caerwfkxfe [ 0 ] . jhj3xqdp44 [ 1 ] *
+_rtB -> caerwfkxfe [ 0 ] . ogviq23brw ) * _rtB -> caerwfkxfe [ 0 ] .
+hlseod05s5 * _rtP -> caerwfkxfe . P_15 + _rtB -> caerwfkxfe [ 0 ] .
+l0uywpcbts [ 1 ] ) + j4aqh4ovvp ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB
+-> caerwfkxfe [ 0 ] . g13baxcrjr = _rtP -> caerwfkxfe . P_27 ; _rtB ->
+caerwfkxfe [ 0 ] . imginyq1xw = _rtP -> caerwfkxfe . P_30 ; } pl4jpj0hcq =
+_rtP -> caerwfkxfe . P_33 * _rtB -> caerwfkxfe [ 0 ] . bj13bsqkpx ; if (
+ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfe [ 0 ] . goja0oqi4m = _rtP
+-> caerwfkxfe . P_34 ; } _rtB -> caerwfkxfe [ 0 ] . baszgji5xa = 0.0 ; _rtB
+-> caerwfkxfe [ 0 ] . baszgji5xa += _rtP -> caerwfkxfe . P_36 * _rtX ->
+caerwfkxfe [ _rtDW -> bpzo543yxr ] . aknjejchsh ; ssCallAccelRunBlock ( S , 0
+, 0 , SS_CALL_MDL_OUTPUTS ) ; if ( _rtB -> caerwfkxfe [ 0 ] . n3b4ri0hl1 >
+_rtP -> caerwfkxfe . P_37 ) { _rtB -> caerwfkxfe [ 0 ] . piv3qevqcx = _rtP ->
+caerwfkxfe . P_37 ; } else if ( _rtB -> caerwfkxfe [ 0 ] . n3b4ri0hl1 < _rtP
+-> caerwfkxfe . P_38 ) { _rtB -> caerwfkxfe [ 0 ] . piv3qevqcx = _rtP ->
+caerwfkxfe . P_38 ; } else { _rtB -> caerwfkxfe [ 0 ] . piv3qevqcx = _rtB ->
+caerwfkxfe [ 0 ] . n3b4ri0hl1 ; } if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB
+-> caerwfkxfe [ 0 ] . ewa4rv34ze = _rtP -> caerwfkxfe . P_39 ; } _rtB ->
+pymioqh1ea [ _rtDW -> bpzo543yxr * 6 ] = kga4k1wepx ; if ( muDoubleScalarAbs
+( fy45xp05wx ) > _rtP -> caerwfkxfe . P_29 ) { _rtB -> pymioqh1ea [ 1 + _rtDW
+-> bpzo543yxr * 6 ] = muDoubleScalarMod ( fy45xp05wx + _rtP -> caerwfkxfe .
+P_26 , _rtB -> caerwfkxfe [ 0 ] . g13baxcrjr ) + _rtP -> caerwfkxfe . P_28 ;
+} else { _rtB -> pymioqh1ea [ 1 + _rtDW -> bpzo543yxr * 6 ] = fy45xp05wx ; }
+fs1e1q0jmn = - _rtB -> caerwfkxfe [ 0 ] . jhj3xqdp44 [ 2 ] - _rtB ->
+caerwfkxfe [ 0 ] . imginyq1xw ; if ( fs1e1q0jmn > _rtP -> caerwfkxfe . P_31 )
+{ _rtB -> pymioqh1ea [ 2 + _rtDW -> bpzo543yxr * 6 ] = _rtP -> caerwfkxfe .
+P_31 ; } else if ( fs1e1q0jmn < _rtP -> caerwfkxfe . P_32 ) { _rtB ->
+pymioqh1ea [ 2 + _rtDW -> bpzo543yxr * 6 ] = _rtP -> caerwfkxfe . P_32 ; }
+else { _rtB -> pymioqh1ea [ 2 + _rtDW -> bpzo543yxr * 6 ] = fs1e1q0jmn ; }
+_rtB -> pymioqh1ea [ 3 + _rtDW -> bpzo543yxr * 6 ] = pl4jpj0hcq ; _rtB ->
+pymioqh1ea [ 4 + _rtDW -> bpzo543yxr * 6 ] = _rtB -> caerwfkxfe [ 0 ] .
+goja0oqi4m ; _rtB -> pymioqh1ea [ 5 + _rtDW -> bpzo543yxr * 6 ] = _rtB ->
+caerwfkxfe [ 0 ] . goja0oqi4m ; _rtB -> a4jof1hftw [ _rtDW -> bpzo543yxr << 2
+] = _rtB -> caerwfkxfe [ 0 ] . jhj3xqdp44 [ 0 ] ; _rtB -> a4jof1hftw [ 1 + (
+_rtDW -> bpzo543yxr << 2 ) ] = _rtB -> caerwfkxfe [ 0 ] . jhj3xqdp44 [ 1 ] ;
+_rtB -> a4jof1hftw [ 2 + ( _rtDW -> bpzo543yxr << 2 ) ] = _rtB -> caerwfkxfe
+[ 0 ] . jhj3xqdp44 [ 2 ] ; _rtB -> a4jof1hftw [ 3 + ( _rtDW -> bpzo543yxr <<
+2 ) ] = hie5vwg0j5_idx_1 ; ssCallAccelCopyCacheForIIS ( S , 5 , ( void * ) 0
+) ; _rtDW -> bpzo543yxr ++ ; } if ( ssIsSampleHit ( S , 1 , 0 ) ) {
+ssCallAccelRunBlock ( S , 57 , 6 , SS_CALL_MDL_OUTPUTS ) ;
+ssCallAccelRunBlock ( S , 57 , 7 , SS_CALL_MDL_OUTPUTS ) ;
+ssCallAccelRunBlock ( S , 57 , 8 , SS_CALL_MDL_OUTPUTS ) ; _rtB -> kxask3c3iy
+[ 0 ] = _rtP -> P_2 [ 0 ] ; _rtB -> kxask3c3iy [ 1 ] = _rtP -> P_2 [ 1 ] ;
+_rtB -> kxask3c3iy [ 2 ] = _rtP -> P_2 [ 2 ] ; ssCallAccelRunBlock ( S , 8 ,
+0 , SS_CALL_MDL_OUTPUTS ) ; } _rtDW -> poe1w2tyiw = 0 ; while ( _rtDW ->
+poe1w2tyiw < 2 ) { ssCallAccelCopyCacheForIIS ( S , 56 , ( void * ) 1 ) ; for
+( i = 0 ; i < 100 ; i ++ ) { ljakha3p0t [ 3 * i ] = _rtB -> dm3jawt2bh [ 3 *
+i + 300 * _rtDW -> poe1w2tyiw ] ; ljakha3p0t [ 1 + 3 * i ] = _rtB ->
+dm3jawt2bh [ ( 3 * i + 300 * _rtDW -> poe1w2tyiw ) + 1 ] ; ljakha3p0t [ 2 + 3
+* i ] = _rtB -> dm3jawt2bh [ ( 3 * i + 300 * _rtDW -> poe1w2tyiw ) + 2 ] ; }
+for ( i = 0 ; i < 100 ; i ++ ) { _rtB -> ouetaealzl [ i << 1 ] = _rtB ->
+fkiqa3jr4p [ ( i << 1 ) + 200 * _rtDW -> poe1w2tyiw ] ; _rtB -> ouetaealzl [
+1 + ( i << 1 ) ] = _rtB -> fkiqa3jr4p [ ( ( i << 1 ) + 200 * _rtDW ->
+poe1w2tyiw ) + 1 ] ; } _rtB -> i4cdhs10kk = _rtB -> grc3ce3t2d [ _rtDW ->
+poe1w2tyiw ] ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { lrp1efvmp1 ( ljakha3p0t ,
+& _rtB -> caerwfkxfedn [ 0 ] . kaghf00me2 , & _rtDW -> caerwfkxfedn [ 0 ] .
+kaghf00me2 , ( kljb3jfx1k * ) & _rtP -> caerwfkxfedn . kaghf00me2 ) ; } _rtB
+-> caerwfkxfedn [ 0 ] . gfj4ecxnuw = ssGetT ( S ) ; ssCallAccelRunBlock ( S ,
+55 , 2 , SS_CALL_MDL_OUTPUTS ) ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB ->
+caerwfkxfedn [ 0 ] . alncatz4jq = _rtP -> caerwfkxfedn . P_0 ; } { real_T * *
+uBuffer = ( real_T * * ) & _rtDW -> caerwfkxfedn [ 0 ] . m3pamfoj4l .
+TUbufferPtrs [ 0 ] ; real_T * * tBuffer = ( real_T * * ) & _rtDW ->
+caerwfkxfedn [ 0 ] . m3pamfoj4l . TUbufferPtrs [ 4 ] ; real_T simTime =
+ssGetT ( S ) ; real_T appliedDelay ; appliedDelay = _rtB -> caerwfkxfedn [ 0
+] . alncatz4jq ; if ( appliedDelay > _rtP -> caerwfkxfedn . P_1 ) {
+appliedDelay = _rtP -> caerwfkxfedn . P_1 ; } if ( appliedDelay < 0.0 ) {
+appliedDelay = 0.0 ; } msy4xojx4u [ 0 ] =
+MultiVehicleModel_acc_rt_TDelayInterpolate ( simTime - appliedDelay , 0.0 , *
+tBuffer , * uBuffer , _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine .
+CircularBufSize [ 0 ] , & _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Last [ 0
+] , _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Tail [ 0 ] , _rtDW ->
+caerwfkxfedn [ 0 ] . bsw4sh0ine . Head [ 0 ] , _rtP -> caerwfkxfedn . P_2 [ 0
+] , 0 , ( boolean_T ) ( ssIsMinorTimeStep ( S ) && ( ssGetTimeOfLastOutput (
+S ) == ssGetT ( S ) ) ) ) ; tBuffer ++ ; uBuffer ++ ; appliedDelay = _rtB ->
+caerwfkxfedn [ 0 ] . alncatz4jq ; if ( appliedDelay > _rtP -> caerwfkxfedn .
+P_1 ) { appliedDelay = _rtP -> caerwfkxfedn . P_1 ; } if ( appliedDelay < 0.0
+) { appliedDelay = 0.0 ; } msy4xojx4u [ 1 ] =
+MultiVehicleModel_acc_rt_TDelayInterpolate ( simTime - appliedDelay , 0.0 , *
+tBuffer , * uBuffer , _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine .
+CircularBufSize [ 1 ] , & _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Last [ 1
+] , _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Tail [ 1 ] , _rtDW ->
+caerwfkxfedn [ 0 ] . bsw4sh0ine . Head [ 1 ] , _rtP -> caerwfkxfedn . P_2 [ 1
+] , 0 , ( boolean_T ) ( ssIsMinorTimeStep ( S ) && ( ssGetTimeOfLastOutput (
+S ) == ssGetT ( S ) ) ) ) ; tBuffer ++ ; uBuffer ++ ; appliedDelay = _rtB ->
+caerwfkxfedn [ 0 ] . alncatz4jq ; if ( appliedDelay > _rtP -> caerwfkxfedn .
+P_1 ) { appliedDelay = _rtP -> caerwfkxfedn . P_1 ; } if ( appliedDelay < 0.0
+) { appliedDelay = 0.0 ; } msy4xojx4u [ 2 ] =
+MultiVehicleModel_acc_rt_TDelayInterpolate ( simTime - appliedDelay , 0.0 , *
+tBuffer , * uBuffer , _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine .
+CircularBufSize [ 2 ] , & _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Last [ 2
+] , _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Tail [ 2 ] , _rtDW ->
+caerwfkxfedn [ 0 ] . bsw4sh0ine . Head [ 2 ] , _rtP -> caerwfkxfedn . P_2 [ 2
+] , 0 , ( boolean_T ) ( ssIsMinorTimeStep ( S ) && ( ssGetTimeOfLastOutput (
+S ) == ssGetT ( S ) ) ) ) ; tBuffer ++ ; uBuffer ++ ; appliedDelay = _rtB ->
+caerwfkxfedn [ 0 ] . alncatz4jq ; if ( appliedDelay > _rtP -> caerwfkxfedn .
+P_1 ) { appliedDelay = _rtP -> caerwfkxfedn . P_1 ; } if ( appliedDelay < 0.0
+) { appliedDelay = 0.0 ; } msy4xojx4u [ 3 ] =
+MultiVehicleModel_acc_rt_TDelayInterpolate ( simTime - appliedDelay , 0.0 , *
+tBuffer , * uBuffer , _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine .
+CircularBufSize [ 3 ] , & _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Last [ 3
+] , _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Tail [ 3 ] , _rtDW ->
+caerwfkxfedn [ 0 ] . bsw4sh0ine . Head [ 3 ] , _rtP -> caerwfkxfedn . P_2 [ 3
+] , 0 , ( boolean_T ) ( ssIsMinorTimeStep ( S ) && ( ssGetTimeOfLastOutput (
+S ) == ssGetT ( S ) ) ) ) ; } if ( msy4xojx4u [ 1 ] > _rtP -> caerwfkxfedn .
+P_3 ) { _rtB -> caerwfkxfedn [ 0 ] . lhaxx34w2u = _rtP -> caerwfkxfedn . P_3
+; } else if ( msy4xojx4u [ 1 ] < _rtP -> caerwfkxfedn . P_4 ) { _rtB ->
+caerwfkxfedn [ 0 ] . lhaxx34w2u = _rtP -> caerwfkxfedn . P_4 ; } else { _rtB
+-> caerwfkxfedn [ 0 ] . lhaxx34w2u = msy4xojx4u [ 1 ] ; } if ( msy4xojx4u [ 0
+] > _rtP -> caerwfkxfedn . P_5 ) { _rtB -> caerwfkxfedn [ 0 ] . n2yhmwdnxy =
+_rtP -> caerwfkxfedn . P_5 ; } else if ( msy4xojx4u [ 0 ] < _rtP ->
+caerwfkxfedn . P_6 ) { _rtB -> caerwfkxfedn [ 0 ] . n2yhmwdnxy = _rtP ->
+caerwfkxfedn . P_6 ; } else { _rtB -> caerwfkxfedn [ 0 ] . n2yhmwdnxy =
+msy4xojx4u [ 0 ] ; } if ( msy4xojx4u [ 3 ] > _rtP -> caerwfkxfedn . P_7 ) {
+_rtB -> caerwfkxfedn [ 0 ] . gw2c2lyxy5 = _rtP -> caerwfkxfedn . P_7 ; } else
+if ( msy4xojx4u [ 3 ] < _rtP -> caerwfkxfedn . P_8 ) { _rtB -> caerwfkxfedn [
+0 ] . gw2c2lyxy5 = _rtP -> caerwfkxfedn . P_8 ; } else { _rtB -> caerwfkxfedn
+[ 0 ] . gw2c2lyxy5 = msy4xojx4u [ 3 ] ; } if ( msy4xojx4u [ 2 ] > _rtP ->
+caerwfkxfedn . P_9 ) { _rtB -> caerwfkxfedn [ 0 ] . cwkmcmdzfo = _rtP ->
+caerwfkxfedn . P_9 ; } else if ( msy4xojx4u [ 2 ] < _rtP -> caerwfkxfedn .
+P_10 ) { _rtB -> caerwfkxfedn [ 0 ] . cwkmcmdzfo = _rtP -> caerwfkxfedn .
+P_10 ; } else { _rtB -> caerwfkxfedn [ 0 ] . cwkmcmdzfo = msy4xojx4u [ 2 ] ;
+} _rtB -> caerwfkxfedn [ 0 ] . he5eulzw1o = _rtP -> caerwfkxfedn . P_12 *
+_rtX -> caerwfkxfedn [ _rtDW -> poe1w2tyiw ] . fqzeriji0s * _rtP ->
+caerwfkxfedn . P_13 ; _rtB -> caerwfkxfedn [ 0 ] . mamxjb0wjs = _rtP ->
+caerwfkxfedn . P_15 * _rtX -> caerwfkxfedn [ _rtDW -> poe1w2tyiw ] .
+an4vvbaly0 * _rtP -> caerwfkxfedn . P_16 ; ssCallAccelRunBlock ( S , 52 , 0 ,
+SS_CALL_MDL_OUTPUTS ) ; _rtB -> caerwfkxfedn [ 0 ] . mbhzv5o4u4 = _rtP ->
+caerwfkxfedn . P_18 * _rtX -> caerwfkxfedn [ _rtDW -> poe1w2tyiw ] .
+c1j0xx0tdy * _rtP -> caerwfkxfedn . P_25 ; _rtB -> caerwfkxfedn [ 0 ] .
+onquqayms1 = _rtP -> caerwfkxfedn . P_22 * _rtX -> caerwfkxfedn [ _rtDW ->
+poe1w2tyiw ] . ekznrhxfnh * _rtP -> caerwfkxfedn . P_26 ; _rtB ->
+caerwfkxfedn [ 0 ] . ajggpqb1ch = _rtP -> caerwfkxfedn . P_20 * _rtX ->
+caerwfkxfedn [ _rtDW -> poe1w2tyiw ] . jbtfdrl5ag * _rtP -> caerwfkxfedn .
+P_27 ; _rtB -> caerwfkxfedn [ 0 ] . p0ypdf02cf = _rtP -> caerwfkxfedn . P_24
+* _rtX -> caerwfkxfedn [ _rtDW -> poe1w2tyiw ] . duh05ekusm * _rtP ->
+caerwfkxfedn . P_28 ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB ->
+caerwfkxfedn [ 0 ] . et35mbqibq [ 0 ] = _rtP -> caerwfkxfedn . P_30 [ 0 ] ;
+_rtB -> caerwfkxfedn [ 0 ] . et35mbqibq [ 1 ] = _rtP -> caerwfkxfedn . P_30 [
+1 ] ; muDoubleScalarSinCos ( _rtP -> caerwfkxfedn . P_32 * _rtP ->
+caerwfkxfedn . P_31 , & _rtB -> caerwfkxfedn [ 0 ] . jupmljx0oy , & _rtB ->
+caerwfkxfedn [ 0 ] . ihos5w3vtq ) ; fy45xp05wx = _rtP -> caerwfkxfedn . P_38
+- _rtP -> caerwfkxfedn . P_37 ; pl4jpj0hcq = muDoubleScalarSqrt ( _rtP ->
+caerwfkxfedn . P_36 - fy45xp05wx * fy45xp05wx ) ; hie5vwg0j5_idx_1 = _rtP ->
+caerwfkxfedn . P_40 * _rtP -> caerwfkxfedn . P_39 ; fy45xp05wx =
+muDoubleScalarSin ( hie5vwg0j5_idx_1 ) ; kga4k1wepx = _rtP -> caerwfkxfedn .
+P_35 - pl4jpj0hcq * pl4jpj0hcq * fy45xp05wx * fy45xp05wx ; eog11ippyj = _rtP
+-> caerwfkxfedn . P_34 / muDoubleScalarSqrt ( kga4k1wepx ) ; _rtB ->
+caerwfkxfedn [ 0 ] . cix2n5jj2k = muDoubleScalarAtan2 ( _rtP -> caerwfkxfedn
+. P_33 , ( _rtP -> caerwfkxfedn . P_41 - pl4jpj0hcq * pl4jpj0hcq ) *
+eog11ippyj / kga4k1wepx ) ; _rtB -> caerwfkxfedn [ 0 ] . nifmytmpod =
+muDoubleScalarAtan2 ( _rtP -> caerwfkxfedn . P_42 , eog11ippyj *
+muDoubleScalarCos ( hie5vwg0j5_idx_1 ) ) ; } m3rmhklpup_idx_0 = ( _rtB ->
+caerwfkxfedn [ 0 ] . h144a2mn2d [ 0 ] * _rtB -> caerwfkxfedn [ 0 ] .
+ihos5w3vtq - _rtB -> caerwfkxfedn [ 0 ] . h144a2mn2d [ 1 ] * _rtB ->
+caerwfkxfedn [ 0 ] . jupmljx0oy ) * _rtB -> caerwfkxfedn [ 0 ] . cix2n5jj2k *
+_rtP -> caerwfkxfedn . P_43 + _rtB -> caerwfkxfedn [ 0 ] . et35mbqibq [ 0 ] ;
+if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfedn [ 0 ] . bbveyzifkj
+= _rtP -> caerwfkxfedn . P_45 ; } if ( muDoubleScalarAbs ( m3rmhklpup_idx_0 )
+> _rtP -> caerwfkxfedn . P_47 ) { phxjodriat = muDoubleScalarMod (
+m3rmhklpup_idx_0 + _rtP -> caerwfkxfedn . P_44 , _rtB -> caerwfkxfedn [ 0 ] .
+bbveyzifkj ) + _rtP -> caerwfkxfedn . P_46 ; } else { phxjodriat =
+m3rmhklpup_idx_0 ; } ewjdtgxpyu = muDoubleScalarAbs ( phxjodriat ) ; if (
+ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfedn [ 0 ] . polons45bz =
+_rtP -> caerwfkxfedn . P_51 ; } p1z2cd4cvp = ( uint8_T ) ( ewjdtgxpyu > _rtB
+-> caerwfkxfedn [ 0 ] . polons45bz ) ; if ( p1z2cd4cvp > _rtP -> caerwfkxfedn
+. P_68 ) { phxjodriat = ( ( ewjdtgxpyu + _rtP -> caerwfkxfedn . P_48 ) * _rtP
+-> caerwfkxfedn . P_49 + _rtP -> caerwfkxfedn . P_50 ) * muDoubleScalarSign (
+phxjodriat ) ; } if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfedn [
+0 ] . cbxlnpxjqw = _rtP -> caerwfkxfedn . P_52 ; _rtB -> caerwfkxfedn [ 0 ] .
+kdds5cdr13 = _rtP -> caerwfkxfedn . P_53 ; } if ( p1z2cd4cvp > _rtP ->
+caerwfkxfedn . P_69 ) { j4aqh4ovvp = _rtB -> caerwfkxfedn [ 0 ] . cbxlnpxjqw
+; } else { j4aqh4ovvp = _rtB -> caerwfkxfedn [ 0 ] . kdds5cdr13 ; }
+ewjdtgxpyu = ( ( _rtB -> caerwfkxfedn [ 0 ] . h144a2mn2d [ 0 ] * _rtB ->
+caerwfkxfedn [ 0 ] . jupmljx0oy + _rtB -> caerwfkxfedn [ 0 ] . h144a2mn2d [ 1
+] * _rtB -> caerwfkxfedn [ 0 ] . ihos5w3vtq ) * _rtB -> caerwfkxfedn [ 0 ] .
+nifmytmpod * _rtP -> caerwfkxfedn . P_43 + _rtB -> caerwfkxfedn [ 0 ] .
+et35mbqibq [ 1 ] ) + j4aqh4ovvp ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB
+-> caerwfkxfedn [ 0 ] . c5or4rhwok = _rtP -> caerwfkxfedn . P_55 ; _rtB ->
+caerwfkxfedn [ 0 ] . e0alki0k2c = _rtP -> caerwfkxfedn . P_58 ; } fs1e1q0jmn
+= - ( _rtP -> caerwfkxfedn . P_29 * _rtB -> caerwfkxfedn [ 0 ] . h144a2mn2d [
+2 ] ) - _rtB -> caerwfkxfedn [ 0 ] . e0alki0k2c ; hie5vwg0j5_idx_1 = _rtP ->
+caerwfkxfedn . P_61 * _rtB -> caerwfkxfedn [ 0 ] . ekdcexblas ; _rtB ->
+caerwfkxfedn [ 0 ] . pc5eie5pt0 [ 0 ] = _rtB -> caerwfkxfedn [ 0 ] .
+klcmsej0on - _rtB -> caerwfkxfedn [ 0 ] . h144a2mn2d [ 0 ] ; _rtB ->
+caerwfkxfedn [ 0 ] . pc5eie5pt0 [ 1 ] = _rtB -> caerwfkxfedn [ 0 ] .
+iprabelc10 - _rtB -> caerwfkxfedn [ 0 ] . h144a2mn2d [ 1 ] ;
+ssCallAccelRunBlock ( S , 49 , 0 , SS_CALL_MDL_OUTPUTS ) ;
+ssCallAccelRunBlock ( S , 48 , 0 , SS_CALL_MDL_OUTPUTS ) ; _rtB ->
+caerwfkxfedn [ 0 ] . nc31pf2wlw = ( ( _rtB -> caerwfkxfedn [ 0 ] . hykkdjfx5z
+- _rtB -> caerwfkxfedn [ 0 ] . h144a2mn2d [ 2 ] ) - 0.0 ) * _rtP ->
+caerwfkxfedn . P_64 ; _rtB -> caerwfkxfedn [ 0 ] . md1ijoow2u = ( _rtB ->
+caerwfkxfedn [ 0 ] . daysgkvjhq - _rtB -> caerwfkxfedn [ 0 ] . pndf1mql5y ) *
+_rtP -> caerwfkxfedn . P_65 ; _rtB -> caerwfkxfedn [ 0 ] . fb1segx4bt [ 0 ] =
+_rtP -> caerwfkxfedn . P_66 * _rtB -> caerwfkxfedn [ 0 ] . c0diqf41xf [ 0 ] ;
+_rtB -> caerwfkxfedn [ 0 ] . fb1segx4bt [ 1 ] = _rtP -> caerwfkxfedn . P_66 *
+_rtB -> caerwfkxfedn [ 0 ] . c0diqf41xf [ 1 ] ; _rtB -> caerwfkxfedn [ 0 ] .
+cow31xfzct = _rtP -> caerwfkxfedn . P_67 * _rtB -> caerwfkxfedn [ 0 ] .
+fb1segx4bt [ 0 ] ; _rtB -> jpsbwe2egc [ _rtDW -> poe1w2tyiw * 6 ] =
+phxjodriat ; if ( muDoubleScalarAbs ( ewjdtgxpyu ) > _rtP -> caerwfkxfedn .
+P_57 ) { _rtB -> jpsbwe2egc [ 1 + _rtDW -> poe1w2tyiw * 6 ] =
+muDoubleScalarMod ( ewjdtgxpyu + _rtP -> caerwfkxfedn . P_54 , _rtB ->
+caerwfkxfedn [ 0 ] . c5or4rhwok ) + _rtP -> caerwfkxfedn . P_56 ; } else {
+_rtB -> jpsbwe2egc [ 1 + _rtDW -> poe1w2tyiw * 6 ] = ewjdtgxpyu ; } if (
+fs1e1q0jmn > _rtP -> caerwfkxfedn . P_59 ) { _rtB -> jpsbwe2egc [ 2 + _rtDW
+-> poe1w2tyiw * 6 ] = _rtP -> caerwfkxfedn . P_59 ; } else if ( fs1e1q0jmn <
+_rtP -> caerwfkxfedn . P_60 ) { _rtB -> jpsbwe2egc [ 2 + _rtDW -> poe1w2tyiw
+* 6 ] = _rtP -> caerwfkxfedn . P_60 ; } else { _rtB -> jpsbwe2egc [ 2 + _rtDW
+-> poe1w2tyiw * 6 ] = fs1e1q0jmn ; } _rtB -> jpsbwe2egc [ 3 + _rtDW ->
+poe1w2tyiw * 6 ] = hie5vwg0j5_idx_1 ; _rtB -> jpsbwe2egc [ 4 + _rtDW ->
+poe1w2tyiw * 6 ] = _rtP -> caerwfkxfedn . P_62 * _rtB -> caerwfkxfedn [ 0 ] .
+mbhzv5o4u4 ; _rtB -> jpsbwe2egc [ 5 + _rtDW -> poe1w2tyiw * 6 ] = _rtP ->
+caerwfkxfedn . P_63 * _rtB -> caerwfkxfedn [ 0 ] . ajggpqb1ch ; _rtB ->
+fv4oyrwsif [ _rtDW -> poe1w2tyiw * 3 ] = _rtB -> caerwfkxfedn [ 0 ] .
+h144a2mn2d [ 0 ] ; _rtB -> fv4oyrwsif [ 1 + _rtDW -> poe1w2tyiw * 3 ] = _rtB
+-> caerwfkxfedn [ 0 ] . h144a2mn2d [ 1 ] ; _rtB -> fv4oyrwsif [ 2 + _rtDW ->
+poe1w2tyiw * 3 ] = _rtB -> caerwfkxfedn [ 0 ] . h144a2mn2d [ 2 ] ;
+ssCallAccelCopyCacheForIIS ( S , 56 , ( void * ) 0 ) ; _rtDW -> poe1w2tyiw ++
+; } if ( ssIsSampleHit ( S , 1 , 0 ) ) { ssCallAccelRunBlock ( S , 57 , 12 ,
+SS_CALL_MDL_OUTPUTS ) ; ssCallAccelRunBlock ( S , 57 , 13 ,
+SS_CALL_MDL_OUTPUTS ) ; ssCallAccelRunBlock ( S , 57 , 14 ,
+SS_CALL_MDL_OUTPUTS ) ; ssCallAccelRunBlock ( S , 57 , 15 ,
+SS_CALL_MDL_OUTPUTS ) ; ssCallAccelRunBlock ( S , 57 , 16 ,
+SS_CALL_MDL_OUTPUTS ) ; ssCallAccelRunBlock ( S , 57 , 17 ,
+SS_CALL_MDL_OUTPUTS ) ; _rtB -> d0rqpzeusu [ 0 ] = _rtP -> P_3 [ 0 ] ; _rtB
+-> d0rqpzeusu [ 1 ] = _rtP -> P_3 [ 1 ] ; _rtB -> d0rqpzeusu [ 2 ] = _rtP ->
+P_3 [ 2 ] ; ssCallAccelRunBlock ( S , 6 , 0 , SS_CALL_MDL_OUTPUTS ) ; _rtB ->
+cwvxovdsaz [ 0 ] = _rtP -> P_4 [ 0 ] ; _rtB -> cwvxovdsaz [ 1 ] = _rtP -> P_4
+[ 1 ] ; _rtB -> cwvxovdsaz [ 2 ] = _rtP -> P_4 [ 2 ] ; _rtB -> cwvxovdsaz [ 3
+] = _rtP -> P_5 ; } _rtDW -> fbn0fcdbpe = 0 ; while ( _rtDW -> fbn0fcdbpe < 1
+) { ssCallAccelCopyCacheForIIS ( S , 47 , ( void * ) 1 ) ; _rtB -> o1jfak3lo1
+[ 0 ] = _rtB -> cwvxovdsaz [ 0 ] ; _rtB -> o1jfak3lo1 [ 1 ] = _rtB ->
+cwvxovdsaz [ 1 ] ; _rtB -> o1jfak3lo1 [ 2 ] = _rtB -> cwvxovdsaz [ 2 ] ; _rtB
+-> o1jfak3lo1 [ 3 ] = _rtB -> cwvxovdsaz [ 3 ] ; _rtB -> nik1o2xbkx = _rtB ->
+meexz54w2k ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { k2pgjttwjz = _rtP ->
+caerwfkxfed . P_109 * _rtDW -> caerwfkxfed [ 0 ] . ng1z2jrijs ; l4uine0f5r =
+_rtDW -> caerwfkxfed [ 0 ] . nj0axyifa2 ; cnkhciwxyc = _rtP -> caerwfkxfed .
+P_112 * _rtDW -> caerwfkxfed [ 0 ] . nj0axyifa2 ; _rtDW -> caerwfkxfed [ 0 ]
+. bdrkmrjmcy = 0 ; while ( _rtDW -> caerwfkxfed [ 0 ] . bdrkmrjmcy < 100 ) {
+if ( muDoubleScalarAbs ( _rtB -> blfec1n33p [ 3 * _rtDW -> caerwfkxfed [ 0 ]
+. bdrkmrjmcy ] ) > _rtP -> caerwfkxfed . caerwfkxfe . P_12 ) { fy45xp05wx =
+muDoubleScalarMod ( _rtB -> blfec1n33p [ 3 * _rtDW -> caerwfkxfed [ 0 ] .
+bdrkmrjmcy ] + _rtP -> caerwfkxfed . caerwfkxfe . P_9 , _rtP -> caerwfkxfed .
+caerwfkxfe . P_10 ) + _rtP -> caerwfkxfed . caerwfkxfe . P_11 ; } else {
+fy45xp05wx = _rtB -> blfec1n33p [ 3 * _rtDW -> caerwfkxfed [ 0 ] . bdrkmrjmcy
+] ; } kga4k1wepx = muDoubleScalarAbs ( fy45xp05wx ) ; p1z2cd4cvp = ( uint8_T
+) ( kga4k1wepx > _rtP -> caerwfkxfed . caerwfkxfe . P_16 ) ; if ( p1z2cd4cvp
+> _rtP -> caerwfkxfed . caerwfkxfe . P_36 ) { fy45xp05wx = ( ( kga4k1wepx +
+_rtP -> caerwfkxfed . caerwfkxfe . P_13 ) * _rtP -> caerwfkxfed . caerwfkxfe
+. P_14 + _rtP -> caerwfkxfed . caerwfkxfe . P_15 ) * muDoubleScalarSign (
+fy45xp05wx ) ; } if ( p1z2cd4cvp > _rtP -> caerwfkxfed . caerwfkxfe . P_37 )
+{ j4aqh4ovvp = _rtP -> caerwfkxfed . caerwfkxfe . P_17 ; } else { j4aqh4ovvp
+= _rtP -> caerwfkxfed . caerwfkxfe . P_18 ; } pl4jpj0hcq = _rtB -> blfec1n33p
+[ 3 * _rtDW -> caerwfkxfed [ 0 ] . bdrkmrjmcy + 1 ] + j4aqh4ovvp ;
+m3rmhklpup_idx_0 = ( fy45xp05wx - _rtP -> caerwfkxfed . caerwfkxfe . P_8 [ 0
+] ) * _rtP -> caerwfkxfed . caerwfkxfe . P_23 ; if ( muDoubleScalarAbs (
+pl4jpj0hcq ) > _rtP -> caerwfkxfed . caerwfkxfe . P_22 ) { tmp_b =
+muDoubleScalarMod ( pl4jpj0hcq + _rtP -> caerwfkxfed . caerwfkxfe . P_19 ,
+_rtP -> caerwfkxfed . caerwfkxfe . P_20 ) + _rtP -> caerwfkxfed . caerwfkxfe
+. P_21 ; } else { tmp_b = pl4jpj0hcq ; } fs1e1q0jmn = _rtP -> caerwfkxfed .
+caerwfkxfe . P_29 - _rtP -> caerwfkxfed . caerwfkxfe . P_28 ; kga4k1wepx =
+muDoubleScalarSqrt ( _rtP -> caerwfkxfed . caerwfkxfe . P_27 - fs1e1q0jmn *
+fs1e1q0jmn ) ; hie5vwg0j5_idx_1 = _rtP -> caerwfkxfed . caerwfkxfe . P_31 *
+_rtP -> caerwfkxfed . caerwfkxfe . P_30 ; fs1e1q0jmn = muDoubleScalarSin (
+hie5vwg0j5_idx_1 ) ; fy45xp05wx = _rtP -> caerwfkxfed . caerwfkxfe . P_26 -
+kga4k1wepx * kga4k1wepx * fs1e1q0jmn * fs1e1q0jmn ; pl4jpj0hcq = _rtP ->
+caerwfkxfed . caerwfkxfe . P_25 / muDoubleScalarSqrt ( fy45xp05wx ) ;
+fs1e1q0jmn = m3rmhklpup_idx_0 / muDoubleScalarAtan2 ( _rtP -> caerwfkxfed .
+caerwfkxfe . P_24 , ( _rtP -> caerwfkxfed . caerwfkxfe . P_32 - kga4k1wepx *
+kga4k1wepx ) * pl4jpj0hcq / fy45xp05wx ) ; muDoubleScalarSinCos ( _rtP ->
+caerwfkxfed . caerwfkxfe . P_34 * _rtP -> caerwfkxfed . caerwfkxfe . P_33 , &
+kga4k1wepx , & fy45xp05wx ) ; hie5vwg0j5_idx_1 = 1.0 / muDoubleScalarAtan2 (
+_rtP -> caerwfkxfed . caerwfkxfe . P_35 , pl4jpj0hcq * muDoubleScalarCos (
+hie5vwg0j5_idx_1 ) ) * ( ( tmp_b - _rtP -> caerwfkxfed . caerwfkxfe . P_8 [ 1
+] ) * _rtP -> caerwfkxfed . caerwfkxfe . P_23 ) ; pl4jpj0hcq = fs1e1q0jmn *
+fy45xp05wx + hie5vwg0j5_idx_1 * kga4k1wepx ; hie5vwg0j5_idx_1 =
+hie5vwg0j5_idx_1 * fy45xp05wx - fs1e1q0jmn * kga4k1wepx ; _rtB -> caerwfkxfed
+[ 0 ] . a1vbgn3jqm [ 3 * _rtDW -> caerwfkxfed [ 0 ] . bdrkmrjmcy ] =
+pl4jpj0hcq ; _rtB -> caerwfkxfed [ 0 ] . a1vbgn3jqm [ 1 + 3 * _rtDW ->
+caerwfkxfed [ 0 ] . bdrkmrjmcy ] = hie5vwg0j5_idx_1 ; _rtB -> caerwfkxfed [ 0
+] . a1vbgn3jqm [ 2 + 3 * _rtDW -> caerwfkxfed [ 0 ] . bdrkmrjmcy ] = ( (
+rt_Lookup2D_Normal ( _rtP -> caerwfkxfed . caerwfkxfe . P_3 , 181 , _rtP ->
+caerwfkxfed . caerwfkxfe . P_4 , 360 , _rtP -> caerwfkxfed . caerwfkxfe . P_5
+, muDoubleScalarMod ( _rtB -> blfec1n33p [ 3 * _rtDW -> caerwfkxfed [ 0 ] .
+bdrkmrjmcy ] + _rtP -> caerwfkxfed . caerwfkxfe . P_0 , _rtP -> caerwfkxfed .
+caerwfkxfe . P_1 ) - _rtP -> caerwfkxfed . caerwfkxfe . P_0 ,
+muDoubleScalarMod ( _rtB -> blfec1n33p [ 3 * _rtDW -> caerwfkxfed [ 0 ] .
+bdrkmrjmcy + 1 ] , _rtP -> caerwfkxfed . caerwfkxfe . P_2 ) ) + _rtB ->
+blfec1n33p [ 3 * _rtDW -> caerwfkxfed [ 0 ] . bdrkmrjmcy + 2 ] ) + _rtP ->
+caerwfkxfed . caerwfkxfe . P_6 ) - _rtP -> caerwfkxfed . caerwfkxfe . P_7 ;
+_rtDW -> caerwfkxfed [ 0 ] . bdrkmrjmcy ++ ; } _rtB -> caerwfkxfed [ 0 ] .
+isk4ovwjyy [ 0 ] = _rtP -> caerwfkxfed . P_113 [ 0 ] ; _rtB -> caerwfkxfed [
+0 ] . isk4ovwjyy [ 1 ] = _rtP -> caerwfkxfed . P_113 [ 1 ] ; } if ( _rtDW ->
+caerwfkxfed [ 0 ] . fz52nilcra . IcNeedsLoading ) { ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork (
+S ) ) -> fbn0fcdbpe ] . n0vhadqx00 [ 0 ] = _rtB -> caerwfkxfed [ 0 ] .
+isk4ovwjyy [ 0 ] ; ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed
+[ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . n0vhadqx00 [ 1
+] = _rtB -> caerwfkxfed [ 0 ] . isk4ovwjyy [ 1 ] ; ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork (
+S ) ) -> fbn0fcdbpe ] . n0vhadqx00 [ 2 ] = _rtB -> o1jfak3lo1 [ 3 ] ; }
+p0qnh2wrim [ 0 ] = ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed
+[ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . n0vhadqx00 [ 0
+] ; p0qnh2wrim [ 1 ] = ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) ->
+caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] .
+n0vhadqx00 [ 1 ] ; p0qnh2wrim [ 2 ] = ( ( f1xhd02yjc * ) ssGetContStates ( S
+) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe
+] . n0vhadqx00 [ 2 ] ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB ->
+caerwfkxfed [ 0 ] . lkf1zdstjv = _rtP -> caerwfkxfed . P_114 ; } _rtB ->
+caerwfkxfed [ 0 ] . h5gaeqtcng = muDoubleScalarMod ( p0qnh2wrim [ 2 ] , _rtB
+-> caerwfkxfed [ 0 ] . lkf1zdstjv ) ; _rtB -> caerwfkxfed [ 0 ] . c1ljjzcvru
+[ 0 ] = _rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . ihl3kytsj1 [ 0 ] + _rtB
+-> o1jfak3lo1 [ 0 ] ; _rtB -> caerwfkxfed [ 0 ] . c1ljjzcvru [ 1 ] = _rtX ->
+caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . ihl3kytsj1 [ 1 ] + _rtB -> o1jfak3lo1 [
+1 ] ; _rtB -> caerwfkxfed [ 0 ] . c1ljjzcvru [ 2 ] = _rtX -> caerwfkxfed [
+_rtDW -> fbn0fcdbpe ] . ihl3kytsj1 [ 2 ] + _rtB -> o1jfak3lo1 [ 2 ] ;
+ssCallAccelRunBlock ( S , 42 , 0 , SS_CALL_MDL_OUTPUTS ) ; _rtB ->
+caerwfkxfed [ 0 ] . e4nc4dmvws = _rtB -> caerwfkxfed [ 0 ] . cc0t2b2jp5 +
+_rtB -> o1jfak3lo1 [ 2 ] ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { kq2lyhvs2k =
+_rtB -> caerwfkxfed [ 0 ] . e4nc4dmvws - ( _rtP -> caerwfkxfed . P_116 *
+_rtDW -> caerwfkxfed [ 0 ] . gtkkyzyaof - _rtP -> caerwfkxfed . P_119 ) ;
+l4uine0f5r = _rtP -> caerwfkxfed . P_120 * kq2lyhvs2k + cnkhciwxyc ; memcpy (
+& _rtB -> caerwfkxfed [ 0 ] . ldtz5l21bv [ 0 ] , & _rtDW -> caerwfkxfed [ 0 ]
+. ecr3a224ty [ 0 ] , 19U * sizeof ( real_T ) ) ; if ( l4uine0f5r > _rtP ->
+caerwfkxfed . P_121 ) { hie5vwg0j5_idx_1 = _rtP -> caerwfkxfed . P_121 ; }
+else if ( l4uine0f5r < _rtP -> caerwfkxfed . P_122 ) { hie5vwg0j5_idx_1 =
+_rtP -> caerwfkxfed . P_122 ; } else { hie5vwg0j5_idx_1 = l4uine0f5r ; }
+dclw24just = hie5vwg0j5_idx_1 - ( _rtB -> caerwfkxfed [ 0 ] . ldtz5l21bv [ 1
+] - _rtP -> caerwfkxfed . P_124 ) ; moyzuytyxz = ( _rtP -> caerwfkxfed .
+P_125 * dclw24just + k2pgjttwjz ) - _rtP -> caerwfkxfed . P_126 * _rtB ->
+caerwfkxfed [ 0 ] . ldtz5l21bv [ 4 ] ; p4gomrxwts = _rtP -> caerwfkxfed .
+P_129 ; if ( moyzuytyxz > _rtP -> caerwfkxfed . P_127 ) { hie5vwg0j5_idx_1 =
+_rtP -> caerwfkxfed . P_127 ; } else if ( moyzuytyxz < _rtP -> caerwfkxfed .
+P_128 ) { hie5vwg0j5_idx_1 = _rtP -> caerwfkxfed . P_128 ; } else {
+hie5vwg0j5_idx_1 = moyzuytyxz ; } _rtB -> caerwfkxfed [ 0 ] . pidu5mopdu =
+hie5vwg0j5_idx_1 + _rtP -> caerwfkxfed . P_129 ; } if ( _rtDW -> caerwfkxfed
+[ 0 ] . ippukhhcqi . IcNeedsLoading ) { ( ( f1xhd02yjc * ) ssGetContStates (
+S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) ->
+fbn0fcdbpe ] . ckcker4qqi = _rtB -> caerwfkxfed [ 0 ] . pidu5mopdu ; } if ( (
+( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . ckcker4qqi >= _rtP -> caerwfkxfed .
+P_130 ) { if ( ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ (
+( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . ckcker4qqi != _rtP
+-> caerwfkxfed . P_130 ) { ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) ->
+caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] .
+ckcker4qqi = _rtP -> caerwfkxfed . P_130 ; ssSetSolverNeedsReset ( S ) ; } }
+else if ( ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( (
+ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . ckcker4qqi <= _rtP ->
+caerwfkxfed . P_131 ) { if ( ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) ->
+caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] .
+ckcker4qqi != _rtP -> caerwfkxfed . P_131 ) { ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork (
+S ) ) -> fbn0fcdbpe ] . ckcker4qqi = _rtP -> caerwfkxfed . P_131 ;
+ssSetSolverNeedsReset ( S ) ; } } cer2wchkb3 = ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork (
+S ) ) -> fbn0fcdbpe ] . ckcker4qqi ; ezloddc3bo = ( _rtB -> caerwfkxfed [ 0 ]
+. pidu5mopdu - cer2wchkb3 ) * _rtP -> caerwfkxfed . P_132 ; if ( ezloddc3bo >
+_rtP -> caerwfkxfed . P_133 ) { _rtB -> caerwfkxfed [ 0 ] . lf33jo1eey = _rtP
+-> caerwfkxfed . P_133 ; } else if ( ezloddc3bo < _rtP -> caerwfkxfed . P_134
+) { _rtB -> caerwfkxfed [ 0 ] . lf33jo1eey = _rtP -> caerwfkxfed . P_134 ; }
+else { _rtB -> caerwfkxfed [ 0 ] . lf33jo1eey = ezloddc3bo ; } if (
+ssIsSampleHit ( S , 1 , 0 ) ) { p4gomrxwts = _rtDW -> caerwfkxfed [ 0 ] .
+pdjtn40ptq ; glbkg2z2pc = _rtP -> caerwfkxfed . P_137 * _rtDW -> caerwfkxfed
+[ 0 ] . pdjtn40ptq ; } _rtB -> caerwfkxfed [ 0 ] . irikytf0pe = _rtB ->
+caerwfkxfed [ 0 ] . cwdm51wlya - _rtB -> caerwfkxfed [ 0 ] . ldtz5l21bv [ 2 ]
+; ssCallAccelRunBlock ( S , 45 , 0 , SS_CALL_MDL_OUTPUTS ) ; ezloddc3bo =
+_rtP -> caerwfkxfed . P_138 * _rtB -> caerwfkxfed [ 0 ] . ppxa1m2xzw ; if (
+ezloddc3bo > _rtP -> caerwfkxfed . P_139 ) { _rtB -> caerwfkxfed [ 0 ] .
+lr5i1dbr3u = _rtP -> caerwfkxfed . P_139 ; } else if ( ezloddc3bo < _rtP ->
+caerwfkxfed . P_140 ) { _rtB -> caerwfkxfed [ 0 ] . lr5i1dbr3u = _rtP ->
+caerwfkxfed . P_140 ; } else { _rtB -> caerwfkxfed [ 0 ] . lr5i1dbr3u =
+ezloddc3bo ; } if ( ssIsSampleHit ( S , 1 , 0 ) ) { p4gomrxwts = _rtB ->
+caerwfkxfed [ 0 ] . lr5i1dbr3u - ( _rtB -> caerwfkxfed [ 0 ] . ldtz5l21bv [ 0
+] - _rtP -> caerwfkxfed . P_141 ) ; j4y5quitjt = ( _rtP -> caerwfkxfed .
+P_142 * p4gomrxwts + glbkg2z2pc ) - _rtP -> caerwfkxfed . P_143 * _rtB ->
+caerwfkxfed [ 0 ] . ldtz5l21bv [ 3 ] ; if ( j4y5quitjt > _rtP -> caerwfkxfed
+. P_144 ) { i5s0bgfbyv = _rtP -> caerwfkxfed . P_144 ; } else if ( j4y5quitjt
+< _rtP -> caerwfkxfed . P_145 ) { i5s0bgfbyv = _rtP -> caerwfkxfed . P_145 ;
+} else { i5s0bgfbyv = j4y5quitjt ; } dji2o12wzn = _rtP -> caerwfkxfed . P_147
+; _rtB -> caerwfkxfed [ 0 ] . jxhl3ahhhy = _rtP -> caerwfkxfed . P_146 *
+i5s0bgfbyv + _rtP -> caerwfkxfed . P_147 ; } if ( _rtDW -> caerwfkxfed [ 0 ]
+. mdtrpadce1 . IcNeedsLoading ) { ( ( f1xhd02yjc * ) ssGetContStates ( S ) )
+-> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] .
+jl2gr241to = _rtB -> caerwfkxfed [ 0 ] . jxhl3ahhhy ; } if ( ( ( f1xhd02yjc *
+) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork
+( S ) ) -> fbn0fcdbpe ] . jl2gr241to >= _rtP -> caerwfkxfed . P_148 ) { if (
+( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 *
+) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . jl2gr241to != _rtP -> caerwfkxfed
+. P_148 ) { ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( (
+ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . jl2gr241to = _rtP ->
+caerwfkxfed . P_148 ; ssSetSolverNeedsReset ( S ) ; } } else if ( ( (
+f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . jl2gr241to <= _rtP -> caerwfkxfed .
+P_149 ) { if ( ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ (
+( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . jl2gr241to != _rtP
+-> caerwfkxfed . P_149 ) { ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) ->
+caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] .
+jl2gr241to = _rtP -> caerwfkxfed . P_149 ; ssSetSolverNeedsReset ( S ) ; } }
+ezloddc3bo = ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( (
+ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . jl2gr241to ;
+f03gfuzt3a = ( _rtB -> caerwfkxfed [ 0 ] . jxhl3ahhhy - ezloddc3bo ) * _rtP
+-> caerwfkxfed . P_150 ; if ( f03gfuzt3a > _rtP -> caerwfkxfed . P_151 ) {
+_rtB -> caerwfkxfed [ 0 ] . mzqc2pyano = _rtP -> caerwfkxfed . P_151 ; } else
+if ( f03gfuzt3a < _rtP -> caerwfkxfed . P_152 ) { _rtB -> caerwfkxfed [ 0 ] .
+mzqc2pyano = _rtP -> caerwfkxfed . P_152 ; } else { _rtB -> caerwfkxfed [ 0 ]
+. mzqc2pyano = f03gfuzt3a ; } if ( ssIsSampleHit ( S , 1 , 0 ) ) { dji2o12wzn
+= _rtP -> caerwfkxfed . P_153 ; _rtB -> caerwfkxfed [ 0 ] . dx0xnxsskx = _rtP
+-> caerwfkxfed . P_153 + _rtP -> caerwfkxfed . P_154 ; } if ( _rtDW ->
+caerwfkxfed [ 0 ] . ezyys0x2oe . IcNeedsLoading ) { ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork (
+S ) ) -> fbn0fcdbpe ] . bz1moouyu2 = _rtB -> caerwfkxfed [ 0 ] . dx0xnxsskx ;
+} if ( ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( (
+ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . bz1moouyu2 >= _rtP ->
+caerwfkxfed . P_155 ) { if ( ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) ->
+caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] .
+bz1moouyu2 != _rtP -> caerwfkxfed . P_155 ) { ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork (
+S ) ) -> fbn0fcdbpe ] . bz1moouyu2 = _rtP -> caerwfkxfed . P_155 ;
+ssSetSolverNeedsReset ( S ) ; } } else if ( ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork (
+S ) ) -> fbn0fcdbpe ] . bz1moouyu2 <= _rtP -> caerwfkxfed . P_156 ) { if ( (
+( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . bz1moouyu2 != _rtP -> caerwfkxfed .
+P_156 ) { ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( (
+ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . bz1moouyu2 = _rtP ->
+caerwfkxfed . P_156 ; ssSetSolverNeedsReset ( S ) ; } } f03gfuzt3a = ( (
+f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . bz1moouyu2 ; d4ajp443jd = ( _rtB ->
+caerwfkxfed [ 0 ] . dx0xnxsskx - f03gfuzt3a ) * _rtP -> caerwfkxfed . P_157 ;
+if ( d4ajp443jd > _rtP -> caerwfkxfed . P_158 ) { _rtB -> caerwfkxfed [ 0 ] .
+eeaqjfivi2 = _rtP -> caerwfkxfed . P_158 ; } else if ( d4ajp443jd < _rtP ->
+caerwfkxfed . P_159 ) { _rtB -> caerwfkxfed [ 0 ] . eeaqjfivi2 = _rtP ->
+caerwfkxfed . P_159 ; } else { _rtB -> caerwfkxfed [ 0 ] . eeaqjfivi2 =
+d4ajp443jd ; } if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ]
+. bgznp4l5rd = i5s0bgfbyv + _rtP -> caerwfkxfed . P_160 ; } if ( _rtDW ->
+caerwfkxfed [ 0 ] . o5qsrxtfr0 . IcNeedsLoading ) { ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork (
+S ) ) -> fbn0fcdbpe ] . he501jqmwr = _rtB -> caerwfkxfed [ 0 ] . bgznp4l5rd ;
+} if ( ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( (
+ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . he501jqmwr >= _rtP ->
+caerwfkxfed . P_161 ) { if ( ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) ->
+caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] .
+he501jqmwr != _rtP -> caerwfkxfed . P_161 ) { ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork (
+S ) ) -> fbn0fcdbpe ] . he501jqmwr = _rtP -> caerwfkxfed . P_161 ;
+ssSetSolverNeedsReset ( S ) ; } } else if ( ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork (
+S ) ) -> fbn0fcdbpe ] . he501jqmwr <= _rtP -> caerwfkxfed . P_162 ) { if ( (
+( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . he501jqmwr != _rtP -> caerwfkxfed .
+P_162 ) { ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( (
+ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . he501jqmwr = _rtP ->
+caerwfkxfed . P_162 ; ssSetSolverNeedsReset ( S ) ; } } d4ajp443jd = ( (
+f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . he501jqmwr ; egqvaqn2aq = ( _rtB ->
+caerwfkxfed [ 0 ] . bgznp4l5rd - d4ajp443jd ) * _rtP -> caerwfkxfed . P_163 ;
+if ( egqvaqn2aq > _rtP -> caerwfkxfed . P_164 ) { _rtB -> caerwfkxfed [ 0 ] .
+mxwdorti1i = _rtP -> caerwfkxfed . P_164 ; } else if ( egqvaqn2aq < _rtP ->
+caerwfkxfed . P_165 ) { _rtB -> caerwfkxfed [ 0 ] . mxwdorti1i = _rtP ->
+caerwfkxfed . P_165 ; } else { _rtB -> caerwfkxfed [ 0 ] . mxwdorti1i =
+egqvaqn2aq ; } if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ]
+. jd31lfyhqv = dji2o12wzn + _rtP -> caerwfkxfed . P_166 ; } if ( _rtDW ->
+caerwfkxfed [ 0 ] . buaseqaif4 . IcNeedsLoading ) { ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork (
+S ) ) -> fbn0fcdbpe ] . fhxf25u0ju = _rtB -> caerwfkxfed [ 0 ] . jd31lfyhqv ;
+} if ( ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( (
+ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . fhxf25u0ju >= _rtP ->
+caerwfkxfed . P_167 ) { if ( ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) ->
+caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] .
+fhxf25u0ju != _rtP -> caerwfkxfed . P_167 ) { ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork (
+S ) ) -> fbn0fcdbpe ] . fhxf25u0ju = _rtP -> caerwfkxfed . P_167 ;
+ssSetSolverNeedsReset ( S ) ; } } else if ( ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork (
+S ) ) -> fbn0fcdbpe ] . fhxf25u0ju <= _rtP -> caerwfkxfed . P_168 ) { if ( (
+( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . fhxf25u0ju != _rtP -> caerwfkxfed .
+P_168 ) { ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( (
+ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . fhxf25u0ju = _rtP ->
+caerwfkxfed . P_168 ; ssSetSolverNeedsReset ( S ) ; } } egqvaqn2aq = ( (
+f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . fhxf25u0ju ; iuixc4td42 = ( _rtB ->
+caerwfkxfed [ 0 ] . jd31lfyhqv - egqvaqn2aq ) * _rtP -> caerwfkxfed . P_169 ;
+if ( iuixc4td42 > _rtP -> caerwfkxfed . P_170 ) { _rtB -> caerwfkxfed [ 0 ] .
+fsyxgxizlr = _rtP -> caerwfkxfed . P_170 ; } else if ( iuixc4td42 < _rtP ->
+caerwfkxfed . P_171 ) { _rtB -> caerwfkxfed [ 0 ] . fsyxgxizlr = _rtP ->
+caerwfkxfed . P_171 ; } else { _rtB -> caerwfkxfed [ 0 ] . fsyxgxizlr =
+iuixc4td42 ; } if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtDW -> caerwfkxfed [ 0
+] . fy2knprxfh = ( _rtB -> caerwfkxfed [ 0 ] . ldtz5l21bv [ 5 ] - _rtP ->
+caerwfkxfed . P_173 [ 1 ] * _rtDW -> caerwfkxfed [ 0 ] . iuvpzqdghs ) / _rtP
+-> caerwfkxfed . P_173 [ 0 ] ; dji2o12wzn = _rtP -> caerwfkxfed . P_175 ;
+_rtB -> caerwfkxfed [ 0 ] . ccg4aidq12 = ( _rtP -> caerwfkxfed . P_172 [ 0 ]
+* _rtDW -> caerwfkxfed [ 0 ] . fy2knprxfh + _rtP -> caerwfkxfed . P_172 [ 1 ]
+* _rtDW -> caerwfkxfed [ 0 ] . iuvpzqdghs ) + _rtP -> caerwfkxfed . P_175 ; }
+if ( _rtDW -> caerwfkxfed [ 0 ] . mfyayib1vs . IcNeedsLoading ) { ( (
+f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . oi11ijmh5w = _rtB -> caerwfkxfed [ 0
+] . ccg4aidq12 ; } if ( ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) ->
+caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] .
+oi11ijmh5w >= _rtP -> caerwfkxfed . P_176 ) { if ( ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork (
+S ) ) -> fbn0fcdbpe ] . oi11ijmh5w != _rtP -> caerwfkxfed . P_176 ) { ( (
+f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . oi11ijmh5w = _rtP -> caerwfkxfed .
+P_176 ; ssSetSolverNeedsReset ( S ) ; } } else if ( ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork (
+S ) ) -> fbn0fcdbpe ] . oi11ijmh5w <= _rtP -> caerwfkxfed . P_177 ) { if ( (
+( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . oi11ijmh5w != _rtP -> caerwfkxfed .
+P_177 ) { ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( (
+ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . oi11ijmh5w = _rtP ->
+caerwfkxfed . P_177 ; ssSetSolverNeedsReset ( S ) ; } } iuixc4td42 = ( (
+f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . oi11ijmh5w ; fs1e1q0jmn = ( _rtB ->
+caerwfkxfed [ 0 ] . ccg4aidq12 - iuixc4td42 ) * _rtP -> caerwfkxfed . P_178 ;
+if ( fs1e1q0jmn > _rtP -> caerwfkxfed . P_179 ) { _rtB -> caerwfkxfed [ 0 ] .
+pnwyjyh04z = _rtP -> caerwfkxfed . P_179 ; } else if ( fs1e1q0jmn < _rtP ->
+caerwfkxfed . P_180 ) { _rtB -> caerwfkxfed [ 0 ] . pnwyjyh04z = _rtP ->
+caerwfkxfed . P_180 ; } else { _rtB -> caerwfkxfed [ 0 ] . pnwyjyh04z =
+fs1e1q0jmn ; } if ( ssIsSampleHit ( S , 1 , 0 ) ) { j4aqh4ovvp = _rtP ->
+caerwfkxfed . P_184 - ( _rtP -> caerwfkxfed . P_185 * _rtDW -> caerwfkxfed [
+0 ] . kvy3yj5nb3 - _rtP -> caerwfkxfed . P_188 ) ; dji2o12wzn = _rtP ->
+caerwfkxfed . P_183 * _rtDW -> caerwfkxfed [ 0 ] . itm1fber1d + _rtP ->
+caerwfkxfed . P_189 * j4aqh4ovvp ; if ( dji2o12wzn > _rtP -> caerwfkxfed .
+P_190 ) { hie5vwg0j5_idx_1 = _rtP -> caerwfkxfed . P_190 ; } else if (
+dji2o12wzn < _rtP -> caerwfkxfed . P_191 ) { hie5vwg0j5_idx_1 = _rtP ->
+caerwfkxfed . P_191 ; } else { hie5vwg0j5_idx_1 = dji2o12wzn ; } pydf4ae103 =
+hie5vwg0j5_idx_1 + _rtP -> caerwfkxfed . P_192 ; if ( pydf4ae103 > _rtP ->
+caerwfkxfed . P_193 ) { pydf4ae103 = _rtP -> caerwfkxfed . P_193 ; } else {
+if ( pydf4ae103 < _rtP -> caerwfkxfed . P_194 ) { pydf4ae103 = _rtP ->
+caerwfkxfed . P_194 ; } } lwtpwyeioi = ( ( l4uine0f5r >= _rtP -> caerwfkxfed
+. P_200 ) && ( kq2lyhvs2k < kesz3x3i1i ( S ) -> caerwfkxfed . chk2o0agwv ) )
+; lwz1urnuzn = ( ( l4uine0f5r >= _rtP -> caerwfkxfed . P_202 ) && (
+kq2lyhvs2k > kesz3x3i1i ( S ) -> caerwfkxfed . oowhapdzdr ) ) ; e34g13vyp1 =
+( ( l4uine0f5r <= _rtP -> caerwfkxfed . P_199 ) && ( kq2lyhvs2k > kesz3x3i1i
+( S ) -> caerwfkxfed . e1sks34zzi ) ) ; ggd4siidnl = ( ( l4uine0f5r <= _rtP
+-> caerwfkxfed . P_204 ) && ( kq2lyhvs2k < kesz3x3i1i ( S ) -> caerwfkxfed .
+nz0a0fbmio ) ) ; if ( _rtP -> caerwfkxfed . P_201 != 0.0 ) { tmp_g =
+lwtpwyeioi ; } else { tmp_g = lwz1urnuzn ; } if ( _rtP -> caerwfkxfed . P_203
+!= 0.0 ) { tmp_j = e34g13vyp1 ; } else { tmp_j = ggd4siidnl ; } if ( ! ( _rtP
+-> caerwfkxfed . P_205 != 0.0 ) ) { lwz1urnuzn = lwtpwyeioi ; } if ( ! ( _rtP
+-> caerwfkxfed . P_206 != 0.0 ) ) { ggd4siidnl = e34g13vyp1 ; } _rtB ->
+caerwfkxfed [ 0 ] . mc3sfrfenr = ( real_T ) ( ( ( _rtP -> caerwfkxfed . P_199
+<= l4uine0f5r ) && ( l4uine0f5r <= _rtP -> caerwfkxfed . P_200 ) ) || ( tmp_g
+|| tmp_j ) || ( lwz1urnuzn && ggd4siidnl ) ) * kq2lyhvs2k ; e34g13vyp1 = ( (
+dji2o12wzn >= _rtP -> caerwfkxfed . P_212 ) && ( j4aqh4ovvp < kesz3x3i1i ( S
+) -> caerwfkxfed . ic0com5f0t ) ) ; i5s0bgfbyv = _rtP -> caerwfkxfed . P_214
+; ggd4siidnl = ( ( dji2o12wzn >= _rtP -> caerwfkxfed . P_214 ) && (
+j4aqh4ovvp > kesz3x3i1i ( S ) -> caerwfkxfed . alvuqr5y0v ) ) ; lwtpwyeioi =
+( ( dji2o12wzn <= _rtP -> caerwfkxfed . P_211 ) && ( j4aqh4ovvp > kesz3x3i1i
+( S ) -> caerwfkxfed . pe5jqlpt3u ) ) ; lwz1urnuzn = ( ( dji2o12wzn <= _rtP
+-> caerwfkxfed . P_216 ) && ( j4aqh4ovvp < kesz3x3i1i ( S ) -> caerwfkxfed .
+fz5qvv5q4c ) ) ; if ( _rtP -> caerwfkxfed . P_213 != 0.0 ) { tmp_g =
+e34g13vyp1 ; } else { tmp_g = ggd4siidnl ; } if ( _rtP -> caerwfkxfed . P_215
+!= 0.0 ) { tmp_j = lwtpwyeioi ; } else { tmp_j = lwz1urnuzn ; } if ( ! ( _rtP
+-> caerwfkxfed . P_217 != 0.0 ) ) { ggd4siidnl = e34g13vyp1 ; } if ( ! ( _rtP
+-> caerwfkxfed . P_218 != 0.0 ) ) { lwz1urnuzn = lwtpwyeioi ; } _rtB ->
+caerwfkxfed [ 0 ] . iq4tus41ez = ( real_T ) ( ( ( _rtP -> caerwfkxfed . P_211
+<= dji2o12wzn ) && ( dji2o12wzn <= _rtP -> caerwfkxfed . P_212 ) ) || ( tmp_g
+|| tmp_j ) || ( ggd4siidnl && lwz1urnuzn ) ) * j4aqh4ovvp ; e34g13vyp1 = ( (
+moyzuytyxz >= _rtP -> caerwfkxfed . P_224 ) && ( dclw24just < kesz3x3i1i ( S
+) -> caerwfkxfed . gybyxqnbcw ) ) ; ggd4siidnl = ( ( moyzuytyxz >= _rtP ->
+caerwfkxfed . P_226 ) && ( dclw24just > kesz3x3i1i ( S ) -> caerwfkxfed .
+mtn2ks0eti ) ) ; lwtpwyeioi = ( ( moyzuytyxz <= _rtP -> caerwfkxfed . P_223 )
+&& ( dclw24just > kesz3x3i1i ( S ) -> caerwfkxfed . lzf5331rmm ) ) ;
+lwz1urnuzn = ( ( moyzuytyxz <= _rtP -> caerwfkxfed . P_228 ) && ( dclw24just
+< kesz3x3i1i ( S ) -> caerwfkxfed . mvg3tdppg1 ) ) ; if ( _rtP -> caerwfkxfed
+. P_225 != 0.0 ) { tmp_g = e34g13vyp1 ; } else { tmp_g = ggd4siidnl ; } if (
+_rtP -> caerwfkxfed . P_227 != 0.0 ) { tmp_j = lwtpwyeioi ; } else { tmp_j =
+lwz1urnuzn ; } if ( ! ( _rtP -> caerwfkxfed . P_229 != 0.0 ) ) { ggd4siidnl =
+e34g13vyp1 ; } if ( ! ( _rtP -> caerwfkxfed . P_230 != 0.0 ) ) { lwz1urnuzn =
+lwtpwyeioi ; } _rtB -> caerwfkxfed [ 0 ] . c4m3fnbvli = ( real_T ) ( ( ( _rtP
+-> caerwfkxfed . P_223 <= moyzuytyxz ) && ( moyzuytyxz <= _rtP -> caerwfkxfed
+. P_224 ) ) || ( tmp_g || tmp_j ) || ( ggd4siidnl && lwz1urnuzn ) ) *
+dclw24just ; e34g13vyp1 = ( ( j4y5quitjt >= _rtP -> caerwfkxfed . P_236 ) &&
+( p4gomrxwts < kesz3x3i1i ( S ) -> caerwfkxfed . ig232hp5bk ) ) ; ggd4siidnl
+= ( ( j4y5quitjt >= _rtP -> caerwfkxfed . P_238 ) && ( p4gomrxwts >
+kesz3x3i1i ( S ) -> caerwfkxfed . jxsecz4tme ) ) ; lwtpwyeioi = ( (
+j4y5quitjt <= _rtP -> caerwfkxfed . P_235 ) && ( p4gomrxwts > kesz3x3i1i ( S
+) -> caerwfkxfed . ol345ukm4z ) ) ; cqc1jds2od = _rtP -> caerwfkxfed . P_240
+; lwz1urnuzn = ( ( j4y5quitjt <= _rtP -> caerwfkxfed . P_240 ) && (
+p4gomrxwts < kesz3x3i1i ( S ) -> caerwfkxfed . pyv1kc11ph ) ) ; if ( _rtP ->
+caerwfkxfed . P_237 != 0.0 ) { tmp_g = e34g13vyp1 ; } else { tmp_g =
+ggd4siidnl ; } if ( _rtP -> caerwfkxfed . P_239 != 0.0 ) { tmp_j = lwtpwyeioi
+; } else { tmp_j = lwz1urnuzn ; } if ( ! ( _rtP -> caerwfkxfed . P_241 != 0.0
+) ) { ggd4siidnl = e34g13vyp1 ; } ht1jy4ffdq = _rtP -> caerwfkxfed . P_242 ;
+if ( ! ( _rtP -> caerwfkxfed . P_242 != 0.0 ) ) { lwz1urnuzn = lwtpwyeioi ; }
+_rtB -> caerwfkxfed [ 0 ] . ndsw5rbzw5 = ( real_T ) ( ( ( _rtP -> caerwfkxfed
+. P_235 <= j4y5quitjt ) && ( j4y5quitjt <= _rtP -> caerwfkxfed . P_236 ) ) ||
+( tmp_g || tmp_j ) || ( ggd4siidnl && lwz1urnuzn ) ) * p4gomrxwts ; _rtB ->
+caerwfkxfed [ 0 ] . copotoe1jl = _rtP -> caerwfkxfed . P_243 ; _rtB ->
+caerwfkxfed [ 0 ] . h3cqvgbc03 = _rtP -> caerwfkxfed . P_244 ; } _rtB ->
+caerwfkxfed [ 0 ] . gqlwzuylsk = muDoubleScalarMod ( p0qnh2wrim [ 0 ] + _rtB
+-> caerwfkxfed [ 0 ] . copotoe1jl , _rtB -> caerwfkxfed [ 0 ] . h3cqvgbc03 )
+- _rtB -> caerwfkxfed [ 0 ] . copotoe1jl ; if ( ssIsSampleHit ( S , 1 , 0 ) )
+{ _rtB -> caerwfkxfed [ 0 ] . eiwbi0wgye = _rtP -> caerwfkxfed . P_245 ; _rtB
+-> caerwfkxfed [ 0 ] . lii31b2nfv = _rtP -> caerwfkxfed . P_246 ; } _rtB ->
+caerwfkxfed [ 0 ] . efpl3xsr4s = muDoubleScalarMod ( p0qnh2wrim [ 1 ] + _rtB
+-> caerwfkxfed [ 0 ] . eiwbi0wgye , _rtB -> caerwfkxfed [ 0 ] . lii31b2nfv )
+- _rtB -> caerwfkxfed [ 0 ] . eiwbi0wgye ; if ( ssIsSampleHit ( S , 1 , 0 ) )
+{ ht1jy4ffdq = _rtDW -> caerwfkxfed [ 0 ] . jwmgh2kg2m ; _rtB -> caerwfkxfed
+[ 0 ] . pxkeb003ga = _rtP -> caerwfkxfed . P_250 * _rtDW -> caerwfkxfed [ 0 ]
+. jwmgh2kg2m ; _rtB -> caerwfkxfed [ 0 ] . farhzjgcnl = _rtP -> caerwfkxfed .
+P_251 ; _rtB -> caerwfkxfed [ 0 ] . h0u1b2ktlh [ 0 ] = _rtDW -> caerwfkxfed [
+0 ] . fhehrp2bxm [ 0 ] ; _rtB -> caerwfkxfed [ 0 ] . h0u1b2ktlh [ 1 ] = _rtDW
+-> caerwfkxfed [ 0 ] . fhehrp2bxm [ 1 ] ; _rtB -> caerwfkxfed [ 0 ] .
+h0u1b2ktlh [ 2 ] = _rtDW -> caerwfkxfed [ 0 ] . fhehrp2bxm [ 2 ] ; }
+brnqslniho_idx_0 = _rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . d44k1xtr5y [
+0 ] + _rtB -> caerwfkxfed [ 0 ] . h0u1b2ktlh [ 0 ] ; brnqslniho_idx_1 = _rtX
+-> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . d44k1xtr5y [ 1 ] + _rtB ->
+caerwfkxfed [ 0 ] . h0u1b2ktlh [ 1 ] ; brnqslniho_idx_2 = _rtX -> caerwfkxfed
+[ _rtDW -> fbn0fcdbpe ] . d44k1xtr5y [ 2 ] + _rtB -> caerwfkxfed [ 0 ] .
+h0u1b2ktlh [ 2 ] ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed [
+0 ] . nebwhznavk = _rtP -> caerwfkxfed . P_255 ; } if ( _rtB -> caerwfkxfed [
+0 ] . nebwhznavk >= _rtP -> caerwfkxfed . P_256 ) { _rtB -> caerwfkxfed [ 0 ]
+. oepibhm15s = ( _rtB -> caerwfkxfed [ 0 ] . pxkeb003ga + _rtB -> caerwfkxfed
+[ 0 ] . farhzjgcnl ) + _rtP -> caerwfkxfed . P_254 * brnqslniho_idx_0 ; }
+else { _rtB -> caerwfkxfed [ 0 ] . oepibhm15s = brnqslniho_idx_0 ; } if (
+ssIsSampleHit ( S , 1 , 0 ) ) { ht1jy4ffdq = _rtDW -> caerwfkxfed [ 0 ] .
+kcxjckmad1 ; _rtB -> caerwfkxfed [ 0 ] . mfnsehx05j = _rtP -> caerwfkxfed .
+P_260 * _rtDW -> caerwfkxfed [ 0 ] . kcxjckmad1 ; _rtB -> caerwfkxfed [ 0 ] .
+jpzbbqynwn = _rtP -> caerwfkxfed . P_261 ; _rtB -> caerwfkxfed [ 0 ] .
+dieoikdgdi = _rtP -> caerwfkxfed . P_263 ; } if ( _rtB -> caerwfkxfed [ 0 ] .
+dieoikdgdi >= _rtP -> caerwfkxfed . P_264 ) { _rtB -> caerwfkxfed [ 0 ] .
+odhyzmaqlj = ( _rtB -> caerwfkxfed [ 0 ] . mfnsehx05j + _rtB -> caerwfkxfed [
+0 ] . jpzbbqynwn ) + _rtP -> caerwfkxfed . P_262 * brnqslniho_idx_1 ; } else
+{ _rtB -> caerwfkxfed [ 0 ] . odhyzmaqlj = brnqslniho_idx_1 ; } if (
+ssIsSampleHit ( S , 1 , 0 ) ) { ht1jy4ffdq = _rtDW -> caerwfkxfed [ 0 ] .
+ecmyxunq25 ; _rtB -> caerwfkxfed [ 0 ] . fhmo3nvrto = _rtP -> caerwfkxfed .
+P_268 * _rtDW -> caerwfkxfed [ 0 ] . ecmyxunq25 ; _rtB -> caerwfkxfed [ 0 ] .
+hazuwcrlz0 = _rtP -> caerwfkxfed . P_269 ; _rtB -> caerwfkxfed [ 0 ] .
+haudtmnjqk = _rtP -> caerwfkxfed . P_271 ; } if ( _rtB -> caerwfkxfed [ 0 ] .
+haudtmnjqk >= _rtP -> caerwfkxfed . P_272 ) { _rtB -> caerwfkxfed [ 0 ] .
+e5dh2fbj00 = ( _rtB -> caerwfkxfed [ 0 ] . fhmo3nvrto + _rtB -> caerwfkxfed [
+0 ] . hazuwcrlz0 ) + _rtP -> caerwfkxfed . P_270 * brnqslniho_idx_2 ; } else
+{ _rtB -> caerwfkxfed [ 0 ] . e5dh2fbj00 = brnqslniho_idx_2 ; } if (
+ssIsSampleHit ( S , 1 , 0 ) ) { ht1jy4ffdq = _rtDW -> caerwfkxfed [ 0 ] .
+o1dm2gnr44 ; _rtB -> caerwfkxfed [ 0 ] . jqgsix4xns = _rtP -> caerwfkxfed .
+P_276 * _rtDW -> caerwfkxfed [ 0 ] . o1dm2gnr44 ; _rtB -> caerwfkxfed [ 0 ] .
+oj00fojr2r = _rtP -> caerwfkxfed . P_277 ; } pj5dx0krjn [ 0 ] = _rtP ->
+caerwfkxfed . P_279 * _rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] .
+jo1on23gqr [ 0 ] ; pj5dx0krjn [ 1 ] = _rtP -> caerwfkxfed . P_279 * _rtX ->
+caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . jo1on23gqr [ 1 ] ; pj5dx0krjn [ 2 ] =
+_rtP -> caerwfkxfed . P_279 * _rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] .
+jo1on23gqr [ 2 ] ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed [
+0 ] . eqb205d5j3 [ 0 ] = _rtDW -> caerwfkxfed [ 0 ] . mbdfohgcix [ 0 ] ; _rtB
+-> caerwfkxfed [ 0 ] . eqb205d5j3 [ 1 ] = _rtDW -> caerwfkxfed [ 0 ] .
+mbdfohgcix [ 1 ] ; _rtB -> caerwfkxfed [ 0 ] . eqb205d5j3 [ 2 ] = _rtDW ->
+caerwfkxfed [ 0 ] . mbdfohgcix [ 2 ] ; } g5o314ttux [ 0 ] = pj5dx0krjn [ 0 ]
++ _rtB -> caerwfkxfed [ 0 ] . eqb205d5j3 [ 0 ] ; g5o314ttux [ 1 ] =
+pj5dx0krjn [ 1 ] + _rtB -> caerwfkxfed [ 0 ] . eqb205d5j3 [ 1 ] ; g5o314ttux
+[ 2 ] = pj5dx0krjn [ 2 ] + _rtB -> caerwfkxfed [ 0 ] . eqb205d5j3 [ 2 ] ;
+fs1e1q0jmn = g5o314ttux [ 1 ] / muDoubleScalarSqrt ( ( g5o314ttux [ 0 ] *
+g5o314ttux [ 0 ] + g5o314ttux [ 1 ] * g5o314ttux [ 1 ] ) + g5o314ttux [ 2 ] *
+g5o314ttux [ 2 ] ) ; muDoubleScalarSinCos ( muDoubleScalarAtan2 ( g5o314ttux
+[ 2 ] , g5o314ttux [ 0 ] ) , & m3rmhklpup_idx_0 , & j4aqh4ovvp ) ; if (
+fs1e1q0jmn > 1.0 ) { fs1e1q0jmn = 1.0 ; } else { if ( fs1e1q0jmn < - 1.0 ) {
+fs1e1q0jmn = - 1.0 ; } } muDoubleScalarSinCos ( muDoubleScalarAsin (
+fs1e1q0jmn ) , & m3rmhklpup_idx_1 , & hie5vwg0j5_idx_1 ) ; _rtB ->
+caerwfkxfed [ 0 ] . dkvx5njht5 [ 0 ] = j4aqh4ovvp * hie5vwg0j5_idx_1 ; _rtB
+-> caerwfkxfed [ 0 ] . dkvx5njht5 [ 1 ] = - ( m3rmhklpup_idx_1 * j4aqh4ovvp )
+; _rtB -> caerwfkxfed [ 0 ] . dkvx5njht5 [ 2 ] = - m3rmhklpup_idx_0 ; _rtB ->
+caerwfkxfed [ 0 ] . dkvx5njht5 [ 3 ] = m3rmhklpup_idx_1 ; _rtB -> caerwfkxfed
+[ 0 ] . dkvx5njht5 [ 4 ] = hie5vwg0j5_idx_1 ; if ( ssIsSampleHit ( S , 1 , 0
+) ) { _rtB -> caerwfkxfed [ 0 ] . dkvx5njht5 [ 5 ] = _rtP -> caerwfkxfed .
+P_281 ; } _rtB -> caerwfkxfed [ 0 ] . dkvx5njht5 [ 6 ] = m3rmhklpup_idx_0 *
+hie5vwg0j5_idx_1 ; _rtB -> caerwfkxfed [ 0 ] . dkvx5njht5 [ 7 ] = - (
+m3rmhklpup_idx_0 * m3rmhklpup_idx_1 ) ; _rtB -> caerwfkxfed [ 0 ] .
+dkvx5njht5 [ 8 ] = j4aqh4ovvp ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB ->
+caerwfkxfed [ 0 ] . i153lbuuri [ 0 ] = _rtP -> caerwfkxfed . P_282 [ 0 ] ;
+_rtB -> caerwfkxfed [ 0 ] . i153lbuuri [ 1 ] = _rtP -> caerwfkxfed . P_282 [
+1 ] ; muDoubleScalarSinCos ( _rtP -> caerwfkxfed . P_284 * _rtP ->
+caerwfkxfed . P_283 , & _rtB -> caerwfkxfed [ 0 ] . omrck52k2t , & _rtB ->
+caerwfkxfed [ 0 ] . pjlvog4q1l ) ; i5s0bgfbyv = _rtP -> caerwfkxfed . P_290 -
+_rtP -> caerwfkxfed . P_289 ; dji2o12wzn = muDoubleScalarSqrt ( _rtP ->
+caerwfkxfed . P_288 - i5s0bgfbyv * i5s0bgfbyv ) ; i5s0bgfbyv = _rtP ->
+caerwfkxfed . P_292 * _rtP -> caerwfkxfed . P_291 ; j4y5quitjt =
+muDoubleScalarSin ( i5s0bgfbyv ) ; j4aqh4ovvp = _rtP -> caerwfkxfed . P_287 -
+dji2o12wzn * dji2o12wzn * j4y5quitjt * j4y5quitjt ; cqc1jds2od = _rtP ->
+caerwfkxfed . P_286 / muDoubleScalarSqrt ( j4aqh4ovvp ) ; j4y5quitjt = _rtP
+-> caerwfkxfed . P_293 ; _rtB -> caerwfkxfed [ 0 ] . hnhpnfrq1n =
+muDoubleScalarAtan2 ( _rtP -> caerwfkxfed . P_285 , ( _rtP -> caerwfkxfed .
+P_293 - dji2o12wzn * dji2o12wzn ) * cqc1jds2od / j4aqh4ovvp ) ; ht1jy4ffdq =
+_rtP -> caerwfkxfed . P_294 ; _rtB -> caerwfkxfed [ 0 ] . h55k13a4n0 =
+muDoubleScalarAtan2 ( _rtP -> caerwfkxfed . P_294 , cqc1jds2od *
+muDoubleScalarCos ( i5s0bgfbyv ) ) ; } j4aqh4ovvp = ( _rtB -> caerwfkxfed [ 0
+] . c1ljjzcvru [ 0 ] * _rtB -> caerwfkxfed [ 0 ] . pjlvog4q1l - _rtB ->
+caerwfkxfed [ 0 ] . c1ljjzcvru [ 1 ] * _rtB -> caerwfkxfed [ 0 ] . omrck52k2t
+) * _rtB -> caerwfkxfed [ 0 ] . hnhpnfrq1n * _rtP -> caerwfkxfed . P_295 +
+_rtB -> caerwfkxfed [ 0 ] . i153lbuuri [ 0 ] ; if ( ssIsSampleHit ( S , 1 , 0
+) ) { _rtB -> caerwfkxfed [ 0 ] . bxynzuwmjx = _rtP -> caerwfkxfed . P_297 ;
+} if ( muDoubleScalarAbs ( j4aqh4ovvp ) > _rtP -> caerwfkxfed . P_299 ) {
+hg4dcusulx = muDoubleScalarMod ( j4aqh4ovvp + _rtP -> caerwfkxfed . P_296 ,
+_rtB -> caerwfkxfed [ 0 ] . bxynzuwmjx ) + _rtP -> caerwfkxfed . P_298 ; }
+else { hg4dcusulx = j4aqh4ovvp ; } phxjodriat = muDoubleScalarAbs (
+hg4dcusulx ) ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ]
+. osu133oaat = _rtP -> caerwfkxfed . P_303 ; } p1z2cd4cvp = ( uint8_T ) (
+phxjodriat > _rtB -> caerwfkxfed [ 0 ] . osu133oaat ) ; if ( p1z2cd4cvp >
+_rtP -> caerwfkxfed . P_582 ) { _rtB -> caerwfkxfed [ 0 ] . kbakpepngr = ( (
+phxjodriat + _rtP -> caerwfkxfed . P_300 ) * _rtP -> caerwfkxfed . P_301 +
+_rtP -> caerwfkxfed . P_302 ) * muDoubleScalarSign ( hg4dcusulx ) ; } else {
+_rtB -> caerwfkxfed [ 0 ] . kbakpepngr = hg4dcusulx ; } if ( ssIsSampleHit (
+S , 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ] . a04xllbzej = _rtP -> caerwfkxfed
+. P_304 ; _rtB -> caerwfkxfed [ 0 ] . pzo3fkwucr = _rtP -> caerwfkxfed .
+P_305 ; _rtB -> caerwfkxfed [ 0 ] . it4zyw33wm = _rtP -> caerwfkxfed . P_306
+; _rtB -> caerwfkxfed [ 0 ] . bwtafnhrlf = _rtP -> caerwfkxfed . P_307 ; } if
+( p1z2cd4cvp > _rtP -> caerwfkxfed . P_583 ) { j4aqh4ovvp = _rtB ->
+caerwfkxfed [ 0 ] . it4zyw33wm ; } else { j4aqh4ovvp = _rtB -> caerwfkxfed [
+0 ] . bwtafnhrlf ; } hg4dcusulx = ( ( _rtB -> caerwfkxfed [ 0 ] . c1ljjzcvru
+[ 0 ] * _rtB -> caerwfkxfed [ 0 ] . omrck52k2t + _rtB -> caerwfkxfed [ 0 ] .
+c1ljjzcvru [ 1 ] * _rtB -> caerwfkxfed [ 0 ] . pjlvog4q1l ) * _rtB ->
+caerwfkxfed [ 0 ] . h55k13a4n0 * _rtP -> caerwfkxfed . P_295 + _rtB ->
+caerwfkxfed [ 0 ] . i153lbuuri [ 1 ] ) + j4aqh4ovvp ; if ( ssIsSampleHit ( S
+, 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ] . cwhf4onqb2 = _rtP -> caerwfkxfed .
+P_309 ; } if ( muDoubleScalarAbs ( hg4dcusulx ) > _rtP -> caerwfkxfed . P_311
+) { _rtB -> caerwfkxfed [ 0 ] . auygoyaxlo = muDoubleScalarMod ( hg4dcusulx +
+_rtP -> caerwfkxfed . P_308 , _rtB -> caerwfkxfed [ 0 ] . cwhf4onqb2 ) + _rtP
+-> caerwfkxfed . P_310 ; } else { _rtB -> caerwfkxfed [ 0 ] . auygoyaxlo =
+hg4dcusulx ; } if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ]
+. iwkvuslvvq = _rtP -> caerwfkxfed . P_312 ; _rtB -> caerwfkxfed [ 0 ] .
+kejad3deou = _rtP -> caerwfkxfed . P_316 ; } fs1e1q0jmn = - _rtB ->
+caerwfkxfed [ 0 ] . c1ljjzcvru [ 2 ] - _rtB -> caerwfkxfed [ 0 ] . kejad3deou
+; if ( fs1e1q0jmn > _rtP -> caerwfkxfed . P_317 ) { _rtB -> caerwfkxfed [ 0 ]
+. klcy13tbuy = _rtP -> caerwfkxfed . P_317 ; } else if ( fs1e1q0jmn < _rtP ->
+caerwfkxfed . P_318 ) { _rtB -> caerwfkxfed [ 0 ] . klcy13tbuy = _rtP ->
+caerwfkxfed . P_318 ; } else { _rtB -> caerwfkxfed [ 0 ] . klcy13tbuy =
+fs1e1q0jmn ; } if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ]
+. esdnp5aufb = _rtP -> caerwfkxfed . P_319 ; } hg4dcusulx = (
+rt_Lookup2D_Normal ( _rtP -> caerwfkxfed . P_313 , 181 , _rtP -> caerwfkxfed
+. P_314 , 360 , _rtP -> caerwfkxfed . P_315 , muDoubleScalarMod ( _rtB ->
+caerwfkxfed [ 0 ] . kbakpepngr + _rtB -> caerwfkxfed [ 0 ] . a04xllbzej ,
+_rtB -> caerwfkxfed [ 0 ] . pzo3fkwucr ) - _rtB -> caerwfkxfed [ 0 ] .
+a04xllbzej , muDoubleScalarMod ( _rtB -> caerwfkxfed [ 0 ] . auygoyaxlo ,
+_rtB -> caerwfkxfed [ 0 ] . iwkvuslvvq ) ) + _rtB -> caerwfkxfed [ 0 ] .
+klcy13tbuy ) + _rtB -> caerwfkxfed [ 0 ] . esdnp5aufb ; _rtB -> caerwfkxfed [
+0 ] . pumqhltdxr = _rtP -> caerwfkxfed . P_320 * hg4dcusulx ; { real_T *
+temp_table = ( real_T * ) & _rtDW -> caerwfkxfed [ 0 ] . j5mgvckif5 [ 0 ] ;
+real_T * pres_table = ( real_T * ) & _rtDW -> caerwfkxfed [ 0 ] . bcbn0o1u2i
+[ 0 ] ; CalcAtmosCOESA ( & _rtB -> caerwfkxfed [ 0 ] . pumqhltdxr , & _rtB ->
+caerwfkxfed [ 0 ] . ae0yugfsb4 , & _rtB -> caerwfkxfed [ 0 ] . nxm2rup005 , &
+_rtB -> caerwfkxfed [ 0 ] . l0o5dftxjr , & _rtB -> caerwfkxfed [ 0 ] .
+erex4tkku3 , temp_table , pres_table , 1 ) ; } phxjodriat = _rtP ->
+caerwfkxfed . P_321 * _rtB -> caerwfkxfed [ 0 ] . l0o5dftxjr ; ewjdtgxpyu = (
+( g5o314ttux [ 0 ] * g5o314ttux [ 0 ] + g5o314ttux [ 1 ] * g5o314ttux [ 1 ] )
++ g5o314ttux [ 2 ] * g5o314ttux [ 2 ] ) * phxjodriat * _rtP -> caerwfkxfed .
+P_322 * _rtP -> caerwfkxfed . P_323 ; if ( ssIsSampleHit ( S , 1 , 0 ) ) {
+_rtB -> caerwfkxfed [ 0 ] . iprkfxieac = _rtP -> caerwfkxfed . P_324 ; _rtB
+-> caerwfkxfed [ 0 ] . bgj1adocgm = _rtP -> caerwfkxfed . P_325 ; }
+pg4naehcgd = muDoubleScalarAtan2 ( g5o314ttux [ 2 ] , g5o314ttux [ 0 ] ) ; if
+( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ] . nasvhnnic1 =
+_rtP -> caerwfkxfed . P_328 ; } eog11ippyj = muDoubleScalarSqrt ( (
+g5o314ttux [ 0 ] * g5o314ttux [ 0 ] + g5o314ttux [ 1 ] * g5o314ttux [ 1 ] ) +
+g5o314ttux [ 2 ] * g5o314ttux [ 2 ] ) ; kga4k1wepx = ( ( ( ( ( _rtP ->
+caerwfkxfed . P_327 * brnqslniho_idx_1 * _rtB -> caerwfkxfed [ 0 ] .
+nasvhnnic1 / ( _rtP -> caerwfkxfed . P_329 * eog11ippyj ) + ( _rtP ->
+caerwfkxfed . P_326 * pg4naehcgd + _rtB -> caerwfkxfed [ 0 ] . bgj1adocgm ) )
++ _rtP -> caerwfkxfed . P_330 * cer2wchkb3 ) + _rtP -> caerwfkxfed . P_331 *
+ezloddc3bo ) + _rtP -> caerwfkxfed . P_332 * d4ajp443jd ) + _rtP ->
+caerwfkxfed . P_333 * f03gfuzt3a ) + _rtP -> caerwfkxfed . P_334 * egqvaqn2aq
+; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ] . l2shuyb0s4
+= _rtP -> caerwfkxfed . P_335 ; } fy45xp05wx = kga4k1wepx - _rtB ->
+caerwfkxfed [ 0 ] . l2shuyb0s4 ; n5bcvxwpc1 = _rtP -> caerwfkxfed . P_341 *
+f03gfuzt3a ; n5bcvxwpc1 = muDoubleScalarAbs ( n5bcvxwpc1 ) ; dl53eqxcnz =
+_rtP -> caerwfkxfed . P_342 * egqvaqn2aq ; dl53eqxcnz = muDoubleScalarAbs (
+dl53eqxcnz ) ; fy45xp05wx = ( ( ( ( ( ( fy45xp05wx * fy45xp05wx * _rtP ->
+caerwfkxfed . P_336 + _rtB -> caerwfkxfed [ 0 ] . iprkfxieac ) +
+muDoubleScalarAbs ( _rtP -> caerwfkxfed . P_337 * cer2wchkb3 ) ) +
+muDoubleScalarAbs ( _rtP -> caerwfkxfed . P_338 * iuixc4td42 ) ) +
+muDoubleScalarAbs ( _rtP -> caerwfkxfed . P_339 * ezloddc3bo ) ) +
+muDoubleScalarAbs ( _rtP -> caerwfkxfed . P_340 * d4ajp443jd ) ) + n5bcvxwpc1
+) + dl53eqxcnz ; fs1e1q0jmn = g5o314ttux [ 1 ] / eog11ippyj ; if ( fs1e1q0jmn
+> 1.0 ) { fs1e1q0jmn = 1.0 ; } else { if ( fs1e1q0jmn < - 1.0 ) { fs1e1q0jmn
+= - 1.0 ; } } dl53eqxcnz = muDoubleScalarAsin ( fs1e1q0jmn ) ; pl4jpj0hcq =
+_rtP -> caerwfkxfed . P_343 * dl53eqxcnz ; if ( ssIsSampleHit ( S , 1 , 0 ) )
+{ _rtB -> caerwfkxfed [ 0 ] . b412mo2fht = _rtP -> caerwfkxfed . P_349 ; }
+n5bcvxwpc1 = ( ( ( ( _rtP -> caerwfkxfed . P_344 * ezloddc3bo + pl4jpj0hcq )
++ _rtP -> caerwfkxfed . P_345 * d4ajp443jd ) + _rtP -> caerwfkxfed . P_346 *
+iuixc4td42 ) + ( _rtP -> caerwfkxfed . P_347 * brnqslniho_idx_0 + _rtP ->
+caerwfkxfed . P_348 * brnqslniho_idx_2 ) * _rtB -> caerwfkxfed [ 0 ] .
+b412mo2fht / ( _rtP -> caerwfkxfed . P_350 * eog11ippyj ) ) * _rtP ->
+caerwfkxfed . P_351 ; dfjrsfkrzj_idx_0 = _rtP -> caerwfkxfed . P_352 [ 0 ] *
+fy45xp05wx * ewjdtgxpyu ; dfjrsfkrzj_idx_1 = _rtP -> caerwfkxfed . P_352 [ 1
+] * n5bcvxwpc1 * ewjdtgxpyu ; dfjrsfkrzj_idx_2 = _rtP -> caerwfkxfed . P_352
+[ 2 ] * kga4k1wepx * ewjdtgxpyu ; for ( i = 0 ; i < 3 ; i ++ ) { tmp [ i ] =
+_rtB -> caerwfkxfed [ 0 ] . dkvx5njht5 [ 3 * i + 2 ] * dfjrsfkrzj_idx_2 + (
+_rtB -> caerwfkxfed [ 0 ] . dkvx5njht5 [ 3 * i + 1 ] * dfjrsfkrzj_idx_1 +
+_rtB -> caerwfkxfed [ 0 ] . dkvx5njht5 [ 3 * i ] * dfjrsfkrzj_idx_0 ) ; } if
+( ssIsSampleHit ( S , 1 , 0 ) ) { muDoubleScalarSinCos ( _rtP -> caerwfkxfed
+. P_353 [ 0 ] , & bhgkwh20ck [ 0 ] , & j4aqh4ovvp ) ; muDoubleScalarSinCos (
+_rtP -> caerwfkxfed . P_353 [ 1 ] , & bhgkwh20ck [ 1 ] , & hie5vwg0j5_idx_1 )
+; muDoubleScalarSinCos ( _rtP -> caerwfkxfed . P_353 [ 2 ] , & bhgkwh20ck [ 2
+] , & i2wxug2o5z_idx_2 ) ; _rtB -> caerwfkxfed [ 0 ] . bhbjnow5zj [ 0 ] =
+hie5vwg0j5_idx_1 * j4aqh4ovvp ; _rtB -> caerwfkxfed [ 0 ] . bhbjnow5zj [ 1 ]
+= bhgkwh20ck [ 2 ] * bhgkwh20ck [ 1 ] * j4aqh4ovvp - i2wxug2o5z_idx_2 *
+bhgkwh20ck [ 0 ] ; _rtB -> caerwfkxfed [ 0 ] . bhbjnow5zj [ 2 ] =
+i2wxug2o5z_idx_2 * bhgkwh20ck [ 1 ] * j4aqh4ovvp + bhgkwh20ck [ 2 ] *
+bhgkwh20ck [ 0 ] ; _rtB -> caerwfkxfed [ 0 ] . bhbjnow5zj [ 3 ] =
+hie5vwg0j5_idx_1 * bhgkwh20ck [ 0 ] ; _rtB -> caerwfkxfed [ 0 ] . bhbjnow5zj
+[ 4 ] = bhgkwh20ck [ 2 ] * bhgkwh20ck [ 1 ] * bhgkwh20ck [ 0 ] +
+i2wxug2o5z_idx_2 * j4aqh4ovvp ; _rtB -> caerwfkxfed [ 0 ] . bhbjnow5zj [ 5 ]
+= i2wxug2o5z_idx_2 * bhgkwh20ck [ 1 ] * bhgkwh20ck [ 0 ] - bhgkwh20ck [ 2 ] *
+j4aqh4ovvp ; _rtB -> caerwfkxfed [ 0 ] . bhbjnow5zj [ 6 ] = - bhgkwh20ck [ 1
+] ; _rtB -> caerwfkxfed [ 0 ] . bhbjnow5zj [ 7 ] = bhgkwh20ck [ 2 ] *
+hie5vwg0j5_idx_1 ; _rtB -> caerwfkxfed [ 0 ] . bhbjnow5zj [ 8 ] =
+i2wxug2o5z_idx_2 * hie5vwg0j5_idx_1 ; _rtB -> caerwfkxfed [ 0 ] . dl0yg115vm
+= _rtP -> caerwfkxfed . P_354 ; } if ( ( ( f1xhd02yjc * ) ssGetContStates ( S
+) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe
+] . m41w0ewt02 >= _rtP -> caerwfkxfed . P_356 ) { if ( ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork (
+S ) ) -> fbn0fcdbpe ] . m41w0ewt02 != _rtP -> caerwfkxfed . P_356 ) { ( (
+f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . m41w0ewt02 = _rtP -> caerwfkxfed .
+P_356 ; ssSetSolverNeedsReset ( S ) ; } } else if ( ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork (
+S ) ) -> fbn0fcdbpe ] . m41w0ewt02 <= _rtP -> caerwfkxfed . P_357 ) { if ( (
+( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . m41w0ewt02 != _rtP -> caerwfkxfed .
+P_357 ) { ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( (
+ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . m41w0ewt02 = _rtP ->
+caerwfkxfed . P_357 ; ssSetSolverNeedsReset ( S ) ; } } n5bcvxwpc1 = ( (
+f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . m41w0ewt02 ; if ( ssIsSampleHit ( S
+, 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ] . mve2umiizy = _rtP -> caerwfkxfed .
+P_358 ; } fy45xp05wx = _rtB -> caerwfkxfed [ 0 ] . dl0yg115vm * eog11ippyj /
+n5bcvxwpc1 / _rtB -> caerwfkxfed [ 0 ] . mve2umiizy ; if ( fy45xp05wx > _rtP
+-> caerwfkxfed . P_359 ) { fy45xp05wx = _rtP -> caerwfkxfed . P_359 ; } else
+{ if ( fy45xp05wx < _rtP -> caerwfkxfed . P_360 ) { fy45xp05wx = _rtP ->
+caerwfkxfed . P_360 ; } } if ( ssIsSampleHit ( S , 1 , 0 ) ) { if ( ( _rtP ->
+caerwfkxfed . P_362 < 0.0 ) && ( _rtP -> caerwfkxfed . P_363 >
+muDoubleScalarFloor ( _rtP -> caerwfkxfed . P_363 ) ) ) { tmp_b = -
+muDoubleScalarPower ( - _rtP -> caerwfkxfed . P_362 , _rtP -> caerwfkxfed .
+P_363 ) ; } else { tmp_b = muDoubleScalarPower ( _rtP -> caerwfkxfed . P_362
+, _rtP -> caerwfkxfed . P_363 ) ; } _rtB -> caerwfkxfed [ 0 ] . ern2l0dxba =
+_rtP -> caerwfkxfed . P_364 * tmp_b ; ht1jy4ffdq = _rtP -> caerwfkxfed .
+P_365 ; cqc1jds2od = _rtP -> caerwfkxfed . P_366 ; if ( ( _rtP -> caerwfkxfed
+. P_365 < 0.0 ) && ( _rtP -> caerwfkxfed . P_366 > muDoubleScalarFloor ( _rtP
+-> caerwfkxfed . P_366 ) ) ) { _rtB -> caerwfkxfed [ 0 ] . crsbrmngfy = -
+muDoubleScalarPower ( - _rtP -> caerwfkxfed . P_365 , _rtP -> caerwfkxfed .
+P_366 ) ; } else { _rtB -> caerwfkxfed [ 0 ] . crsbrmngfy =
+muDoubleScalarPower ( _rtP -> caerwfkxfed . P_365 , _rtP -> caerwfkxfed .
+P_366 ) ; } } pl4jpj0hcq = n5bcvxwpc1 * n5bcvxwpc1 ; fs1e1q0jmn = ( ( ( (
+_rtP -> caerwfkxfed . P_361 [ 0 ] * fy45xp05wx + _rtP -> caerwfkxfed . P_361
+[ 1 ] ) * fy45xp05wx + _rtP -> caerwfkxfed . P_361 [ 2 ] ) * fy45xp05wx +
+_rtP -> caerwfkxfed . P_361 [ 3 ] ) * fy45xp05wx + _rtP -> caerwfkxfed .
+P_361 [ 4 ] ) * _rtB -> caerwfkxfed [ 0 ] . ern2l0dxba * _rtB -> caerwfkxfed
+[ 0 ] . crsbrmngfy * pl4jpj0hcq * phxjodriat ; if ( ssIsSampleHit ( S , 1 , 0
+) ) { _rtB -> caerwfkxfed [ 0 ] . m00p2nscbk = _rtP -> caerwfkxfed . P_367 ;
+_rtB -> caerwfkxfed [ 0 ] . im00rqacdx = _rtP -> caerwfkxfed . P_368 ; } for
+( i = 0 ; i < 3 ; i ++ ) { tmp_p [ i ] = _rtB -> caerwfkxfed [ 0 ] .
+bhbjnow5zj [ i + 6 ] * _rtB -> caerwfkxfed [ 0 ] . im00rqacdx + ( _rtB ->
+caerwfkxfed [ 0 ] . bhbjnow5zj [ i + 3 ] * _rtB -> caerwfkxfed [ 0 ] .
+m00p2nscbk + _rtB -> caerwfkxfed [ 0 ] . bhbjnow5zj [ i ] * fs1e1q0jmn ) ; }
+for ( i = 0 ; i < 3 ; i ++ ) { bhgkwh20ck [ i ] = _rtB -> caerwfkxfed [ 0 ] .
+bhbjnow5zj [ i + 6 ] * _rtB -> caerwfkxfed [ 0 ] . im00rqacdx + ( _rtB ->
+caerwfkxfed [ 0 ] . bhbjnow5zj [ i + 3 ] * _rtB -> caerwfkxfed [ 0 ] .
+m00p2nscbk + _rtB -> caerwfkxfed [ 0 ] . bhbjnow5zj [ i ] * fs1e1q0jmn ) ; }
+for ( i = 0 ; i < 3 ; i ++ ) { tmp_i [ i ] = ( ( _rtB -> caerwfkxfed [ 0 ] .
+dkvx5njht5 [ 3 * i + 1 ] * dfjrsfkrzj_idx_1 + _rtB -> caerwfkxfed [ 0 ] .
+dkvx5njht5 [ 3 * i ] * dfjrsfkrzj_idx_0 ) + _rtB -> caerwfkxfed [ 0 ] .
+dkvx5njht5 [ 3 * i + 2 ] * dfjrsfkrzj_idx_2 ) + bhgkwh20ck [ i ] ; }
+dw55yfpcss [ 0 ] = _rtP -> caerwfkxfed . P_369 * tmp_i [ 0 ] ; dw55yfpcss [ 1
+] = _rtP -> caerwfkxfed . P_369 * tmp_i [ 1 ] ; dw55yfpcss [ 2 ] = _rtP ->
+caerwfkxfed . P_369 * tmp_i [ 2 ] ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB
+-> caerwfkxfed [ 0 ] . mje3lgtxyr = _rtP -> caerwfkxfed . P_371 ; } if ( _rtB
+-> caerwfkxfed [ 0 ] . mje3lgtxyr >= _rtP -> caerwfkxfed . P_372 ) { _rtB ->
+caerwfkxfed [ 0 ] . kggoys50p2 = ( _rtB -> caerwfkxfed [ 0 ] . jqgsix4xns +
+_rtB -> caerwfkxfed [ 0 ] . oj00fojr2r ) + _rtP -> caerwfkxfed . P_370 *
+dw55yfpcss [ 0 ] ; } else { _rtB -> caerwfkxfed [ 0 ] . kggoys50p2 =
+dw55yfpcss [ 0 ] ; } if ( ssIsSampleHit ( S , 1 , 0 ) ) { ht1jy4ffdq = _rtDW
+-> caerwfkxfed [ 0 ] . n5w1vbpkm1 ; _rtB -> caerwfkxfed [ 0 ] . nfnyahn1xy =
+_rtP -> caerwfkxfed . P_376 * _rtDW -> caerwfkxfed [ 0 ] . n5w1vbpkm1 ; _rtB
+-> caerwfkxfed [ 0 ] . lragrdbjiy = _rtP -> caerwfkxfed . P_377 ; _rtB ->
+caerwfkxfed [ 0 ] . cbjvmcvopd = _rtP -> caerwfkxfed . P_379 ; } if ( _rtB ->
+caerwfkxfed [ 0 ] . cbjvmcvopd >= _rtP -> caerwfkxfed . P_380 ) { _rtB ->
+caerwfkxfed [ 0 ] . n3oksdm5ay = ( _rtB -> caerwfkxfed [ 0 ] . nfnyahn1xy +
+_rtB -> caerwfkxfed [ 0 ] . lragrdbjiy ) + _rtP -> caerwfkxfed . P_378 *
+dw55yfpcss [ 1 ] ; } else { _rtB -> caerwfkxfed [ 0 ] . n3oksdm5ay =
+dw55yfpcss [ 1 ] ; } if ( ssIsSampleHit ( S , 1 , 0 ) ) { ht1jy4ffdq = _rtDW
+-> caerwfkxfed [ 0 ] . ii3efjiukm ; _rtB -> caerwfkxfed [ 0 ] . l31md0xpbk =
+_rtP -> caerwfkxfed . P_384 * _rtDW -> caerwfkxfed [ 0 ] . ii3efjiukm ; _rtB
+-> caerwfkxfed [ 0 ] . h1t0ngjc4q = _rtP -> caerwfkxfed . P_385 ; _rtB ->
+caerwfkxfed [ 0 ] . oi50box3i2 = _rtP -> caerwfkxfed . P_387 ; } if ( _rtB ->
+caerwfkxfed [ 0 ] . oi50box3i2 >= _rtP -> caerwfkxfed . P_388 ) { _rtB ->
+caerwfkxfed [ 0 ] . lrxmjcwt1u = ( _rtB -> caerwfkxfed [ 0 ] . l31md0xpbk +
+_rtB -> caerwfkxfed [ 0 ] . h1t0ngjc4q ) + _rtP -> caerwfkxfed . P_386 *
+dw55yfpcss [ 2 ] ; } else { _rtB -> caerwfkxfed [ 0 ] . lrxmjcwt1u =
+dw55yfpcss [ 2 ] ; } if ( ssIsSampleHit ( S , 1 , 0 ) ) { ht1jy4ffdq = _rtDW
+-> caerwfkxfed [ 0 ] . anzbkhzxt1 ; _rtB -> caerwfkxfed [ 0 ] . kpwhr3cdz3 =
+_rtP -> caerwfkxfed . P_392 * _rtDW -> caerwfkxfed [ 0 ] . anzbkhzxt1 ; _rtB
+-> caerwfkxfed [ 0 ] . eq4rz21llk = _rtP -> caerwfkxfed . P_393 ; _rtB ->
+caerwfkxfed [ 0 ] . emrnwakb21 = _rtP -> caerwfkxfed . P_394 ; } hg4dcusulx
+-= _rtB -> caerwfkxfed [ 0 ] . emrnwakb21 ; if ( ssIsSampleHit ( S , 1 , 0 )
+) { _rtB -> caerwfkxfed [ 0 ] . d5xs2h4hs5 = _rtP -> caerwfkxfed . P_396 ; }
+if ( _rtB -> caerwfkxfed [ 0 ] . d5xs2h4hs5 >= _rtP -> caerwfkxfed . P_397 )
+{ _rtB -> caerwfkxfed [ 0 ] . jb1vtstgxy = ( _rtB -> caerwfkxfed [ 0 ] .
+kpwhr3cdz3 + _rtB -> caerwfkxfed [ 0 ] . eq4rz21llk ) + _rtP -> caerwfkxfed .
+P_395 * hg4dcusulx ; } else { _rtB -> caerwfkxfed [ 0 ] . jb1vtstgxy =
+hg4dcusulx ; } if ( ssIsSampleHit ( S , 1 , 0 ) ) { ht1jy4ffdq = _rtDW ->
+caerwfkxfed [ 0 ] . jfa2ekpuah ; _rtB -> caerwfkxfed [ 0 ] . fofho2m5bn =
+_rtP -> caerwfkxfed . P_401 * _rtDW -> caerwfkxfed [ 0 ] . jfa2ekpuah ; _rtB
+-> caerwfkxfed [ 0 ] . nnwocj3res = _rtP -> caerwfkxfed . P_402 ; _rtB ->
+caerwfkxfed [ 0 ] . gcsazytovv = _rtP -> caerwfkxfed . P_404 ; } if ( _rtB ->
+caerwfkxfed [ 0 ] . gcsazytovv >= _rtP -> caerwfkxfed . P_405 ) { _rtB ->
+caerwfkxfed [ 0 ] . plmtdn53lx = ( _rtB -> caerwfkxfed [ 0 ] . fofho2m5bn +
+_rtB -> caerwfkxfed [ 0 ] . nnwocj3res ) + _rtP -> caerwfkxfed . P_403 *
+eog11ippyj ; } else { _rtB -> caerwfkxfed [ 0 ] . plmtdn53lx = eog11ippyj ; }
+if ( ssIsSampleHit ( S , 1 , 0 ) ) { ht1jy4ffdq = _rtDW -> caerwfkxfed [ 0 ]
+. eded13czzw ; _rtB -> caerwfkxfed [ 0 ] . gfyqwnem33 = _rtP -> caerwfkxfed .
+P_409 * _rtDW -> caerwfkxfed [ 0 ] . eded13czzw ; _rtB -> caerwfkxfed [ 0 ] .
+gag3i5siqp = _rtP -> caerwfkxfed . P_410 ; _rtB -> caerwfkxfed [ 0 ] .
+g3x1ddnqwi = _rtP -> caerwfkxfed . P_412 ; } if ( _rtB -> caerwfkxfed [ 0 ] .
+g3x1ddnqwi >= _rtP -> caerwfkxfed . P_413 ) { _rtB -> caerwfkxfed [ 0 ] .
+gquopmxkn3 = ( _rtB -> caerwfkxfed [ 0 ] . gfyqwnem33 + _rtB -> caerwfkxfed [
+0 ] . gag3i5siqp ) + _rtP -> caerwfkxfed . P_411 * pg4naehcgd ; } else { _rtB
+-> caerwfkxfed [ 0 ] . gquopmxkn3 = pg4naehcgd ; } if ( ssIsSampleHit ( S , 1
+, 0 ) ) { ht1jy4ffdq = _rtDW -> caerwfkxfed [ 0 ] . fgy225ioz4 ; _rtB ->
+caerwfkxfed [ 0 ] . fp1xjkvcqy = _rtP -> caerwfkxfed . P_417 * _rtDW ->
+caerwfkxfed [ 0 ] . fgy225ioz4 ; _rtB -> caerwfkxfed [ 0 ] . ox134kegyd =
+_rtP -> caerwfkxfed . P_418 ; } hie5vwg0j5_idx_1 = _rtP -> caerwfkxfed .
+P_419 * dl53eqxcnz ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed
+[ 0 ] . jcwhq2edhc = _rtP -> caerwfkxfed . P_420 ; } if ( _rtB -> caerwfkxfed
+[ 0 ] . jcwhq2edhc >= _rtP -> caerwfkxfed . P_421 ) { _rtB -> caerwfkxfed [ 0
+] . jl55h0mvex = ( _rtB -> caerwfkxfed [ 0 ] . fp1xjkvcqy + _rtB ->
+caerwfkxfed [ 0 ] . ox134kegyd ) + hie5vwg0j5_idx_1 ; } else { _rtB ->
+caerwfkxfed [ 0 ] . jl55h0mvex = dl53eqxcnz ; } if ( ssIsSampleHit ( S , 1 ,
+0 ) ) { ht1jy4ffdq = _rtP -> caerwfkxfed . P_422 * _rtB -> caerwfkxfed [ 0 ]
+. kbakpepngr ; cqc1jds2od = _rtP -> caerwfkxfed . P_423 * _rtB -> caerwfkxfed
+[ 0 ] . auygoyaxlo ; } muDoubleScalarSinCos ( p0qnh2wrim [ 2 ] , & dw55yfpcss
+[ 0 ] , & peirsr4iz0 [ 0 ] ) ; muDoubleScalarSinCos ( p0qnh2wrim [ 1 ] , &
+dw55yfpcss [ 1 ] , & peirsr4iz0 [ 1 ] ) ; muDoubleScalarSinCos ( p0qnh2wrim [
+0 ] , & dw55yfpcss [ 2 ] , & peirsr4iz0 [ 2 ] ) ; gdgwwi2lmx [ 0 ] =
+peirsr4iz0 [ 1 ] * peirsr4iz0 [ 0 ] ; gdgwwi2lmx [ 1 ] = dw55yfpcss [ 2 ] *
+dw55yfpcss [ 1 ] * peirsr4iz0 [ 0 ] - peirsr4iz0 [ 2 ] * dw55yfpcss [ 0 ] ;
+gdgwwi2lmx [ 2 ] = peirsr4iz0 [ 2 ] * dw55yfpcss [ 1 ] * peirsr4iz0 [ 0 ] +
+dw55yfpcss [ 2 ] * dw55yfpcss [ 0 ] ; gdgwwi2lmx [ 3 ] = peirsr4iz0 [ 1 ] *
+dw55yfpcss [ 0 ] ; gdgwwi2lmx [ 4 ] = dw55yfpcss [ 2 ] * dw55yfpcss [ 1 ] *
+dw55yfpcss [ 0 ] + peirsr4iz0 [ 2 ] * peirsr4iz0 [ 0 ] ; gdgwwi2lmx [ 5 ] =
+peirsr4iz0 [ 2 ] * dw55yfpcss [ 1 ] * dw55yfpcss [ 0 ] - dw55yfpcss [ 2 ] *
+peirsr4iz0 [ 0 ] ; gdgwwi2lmx [ 6 ] = - dw55yfpcss [ 1 ] ; gdgwwi2lmx [ 7 ] =
+dw55yfpcss [ 2 ] * peirsr4iz0 [ 1 ] ; gdgwwi2lmx [ 8 ] = peirsr4iz0 [ 2 ] *
+peirsr4iz0 [ 1 ] ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { muDoubleScalarSinCos
+( _rtP -> caerwfkxfed . P_426 * _rtP -> caerwfkxfed . P_425 , & dji2o12wzn ,
+& i5s0bgfbyv ) ; j4y5quitjt = _rtP -> caerwfkxfed . P_427 ; _rtB ->
+caerwfkxfed [ 0 ] . elubayqgla [ 0 ] = _rtP -> caerwfkxfed . P_428 *
+i5s0bgfbyv * _rtP -> caerwfkxfed . P_424 * _rtP -> caerwfkxfed . P_429 ; _rtB
+-> caerwfkxfed [ 0 ] . elubayqgla [ 1 ] = _rtP -> caerwfkxfed . P_428 *
+dji2o12wzn * _rtP -> caerwfkxfed . P_424 * _rtP -> caerwfkxfed . P_429 ; _rtB
+-> caerwfkxfed [ 0 ] . elubayqgla [ 2 ] = _rtP -> caerwfkxfed . P_428 * _rtP
+-> caerwfkxfed . P_427 * _rtP -> caerwfkxfed . P_424 * _rtP -> caerwfkxfed .
+P_429 ; } for ( i = 0 ; i < 3 ; i ++ ) { _rtB -> caerwfkxfed [ 0 ] .
+dcy40tjqwz [ i ] = ( ( gdgwwi2lmx [ 3 * i + 1 ] * pj5dx0krjn [ 1 ] +
+gdgwwi2lmx [ 3 * i ] * pj5dx0krjn [ 0 ] ) + gdgwwi2lmx [ 3 * i + 2 ] *
+pj5dx0krjn [ 2 ] ) + _rtB -> caerwfkxfed [ 0 ] . elubayqgla [ i ] ; } if (
+ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ] . f2lj4ilbid [ 0 ]
+= _rtB -> caerwfkxfed [ 0 ] . gqlwzuylsk ; _rtB -> caerwfkxfed [ 0 ] .
+f2lj4ilbid [ 1 ] = _rtB -> caerwfkxfed [ 0 ] . efpl3xsr4s ; _rtB ->
+caerwfkxfed [ 0 ] . f2lj4ilbid [ 2 ] = _rtB -> caerwfkxfed [ 0 ] . h5gaeqtcng
+; _rtB -> caerwfkxfed [ 0 ] . f2lj4ilbid [ 3 ] = _rtB -> caerwfkxfed [ 0 ] .
+oepibhm15s ; _rtB -> caerwfkxfed [ 0 ] . f2lj4ilbid [ 4 ] = _rtB ->
+caerwfkxfed [ 0 ] . odhyzmaqlj ; _rtB -> caerwfkxfed [ 0 ] . f2lj4ilbid [ 5 ]
+= _rtB -> caerwfkxfed [ 0 ] . e5dh2fbj00 ; _rtB -> caerwfkxfed [ 0 ] .
+f2lj4ilbid [ 6 ] = _rtB -> caerwfkxfed [ 0 ] . kggoys50p2 ; _rtB ->
+caerwfkxfed [ 0 ] . f2lj4ilbid [ 7 ] = _rtB -> caerwfkxfed [ 0 ] . n3oksdm5ay
+; _rtB -> caerwfkxfed [ 0 ] . f2lj4ilbid [ 8 ] = _rtB -> caerwfkxfed [ 0 ] .
+lrxmjcwt1u ; _rtB -> caerwfkxfed [ 0 ] . f2lj4ilbid [ 9 ] = _rtB ->
+caerwfkxfed [ 0 ] . jb1vtstgxy ; _rtB -> caerwfkxfed [ 0 ] . f2lj4ilbid [ 10
+] = _rtB -> caerwfkxfed [ 0 ] . plmtdn53lx ; _rtB -> caerwfkxfed [ 0 ] .
+f2lj4ilbid [ 11 ] = _rtB -> caerwfkxfed [ 0 ] . gquopmxkn3 ; _rtB ->
+caerwfkxfed [ 0 ] . f2lj4ilbid [ 12 ] = _rtB -> caerwfkxfed [ 0 ] .
+jl55h0mvex ; _rtB -> caerwfkxfed [ 0 ] . f2lj4ilbid [ 13 ] = ht1jy4ffdq ;
+_rtB -> caerwfkxfed [ 0 ] . f2lj4ilbid [ 14 ] = cqc1jds2od ; _rtB ->
+caerwfkxfed [ 0 ] . f2lj4ilbid [ 15 ] = _rtB -> caerwfkxfed [ 0 ] .
+klcy13tbuy ; _rtB -> caerwfkxfed [ 0 ] . f2lj4ilbid [ 16 ] = _rtB ->
+caerwfkxfed [ 0 ] . dcy40tjqwz [ 0 ] ; _rtB -> caerwfkxfed [ 0 ] . f2lj4ilbid
+[ 17 ] = _rtB -> caerwfkxfed [ 0 ] . dcy40tjqwz [ 1 ] ; _rtB -> caerwfkxfed [
+0 ] . f2lj4ilbid [ 18 ] = _rtB -> caerwfkxfed [ 0 ] . dcy40tjqwz [ 2 ] ; _rtB
+-> caerwfkxfed [ 0 ] . aj2255kwjv = _rtP -> caerwfkxfed . P_430 * ht1jy4ffdq
+; _rtB -> caerwfkxfed [ 0 ] . hyzeiv1ymg = _rtP -> caerwfkxfed . P_431 *
+cqc1jds2od ; } jbe23ejmq4 [ 0 ] = _rtB -> caerwfkxfed [ 0 ] . aj2255kwjv ;
+jbe23ejmq4 [ 1 ] = _rtB -> caerwfkxfed [ 0 ] . hyzeiv1ymg ; jbe23ejmq4 [ 2 ]
+= _rtB -> caerwfkxfed [ 0 ] . klcy13tbuy ; jbe23ejmq4 [ 3 ] = _rtP ->
+caerwfkxfed . P_433 * _rtB -> caerwfkxfed [ 0 ] . h5gaeqtcng ; jbe23ejmq4 [ 4
+] = _rtP -> caerwfkxfed . P_432 * _rtB -> caerwfkxfed [ 0 ] . efpl3xsr4s ;
+jbe23ejmq4 [ 5 ] = _rtP -> caerwfkxfed . P_434 * _rtB -> caerwfkxfed [ 0 ] .
+gqlwzuylsk ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { memcpy ( & kb4gbgtxnr [ 0 ]
+, & _rtP -> caerwfkxfed . P_435 [ 0 ] , 18U * sizeof ( real_T ) ) ; for ( i =
+0 ; i < 3 ; i ++ ) { _rtB -> caerwfkxfed [ 0 ] . estb4d0idj [ 3 * i ] = _rtP
+-> caerwfkxfed . P_435 [ 6 * i ] ; _rtB -> caerwfkxfed [ 0 ] . estb4d0idj [ 1
++ 3 * i ] = _rtP -> caerwfkxfed . P_435 [ 6 * i + 1 ] ; _rtB -> caerwfkxfed [
+0 ] . estb4d0idj [ 2 + 3 * i ] = _rtP -> caerwfkxfed . P_435 [ 6 * i + 2 ] ;
+} } for ( i = 0 ; i < 3 ; i ++ ) { peirsr4iz0 [ i ] = _rtB -> caerwfkxfed [ 0
+] . estb4d0idj [ i + 6 ] * _rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] .
+d44k1xtr5y [ 2 ] + ( _rtB -> caerwfkxfed [ 0 ] . estb4d0idj [ i + 3 ] * _rtX
+-> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . d44k1xtr5y [ 1 ] + _rtB ->
+caerwfkxfed [ 0 ] . estb4d0idj [ i ] * _rtX -> caerwfkxfed [ _rtDW ->
+fbn0fcdbpe ] . d44k1xtr5y [ 0 ] ) ; } if ( ssIsSampleHit ( S , 1 , 0 ) ) {
+for ( i = 0 ; i < 3 ; i ++ ) { _rtB -> caerwfkxfed [ 0 ] . hdizs1wag1 [ 3 * i
+] = kb4gbgtxnr [ 6 * i + 3 ] ; _rtB -> caerwfkxfed [ 0 ] . hdizs1wag1 [ 1 + 3
+* i ] = kb4gbgtxnr [ 6 * i + 4 ] ; _rtB -> caerwfkxfed [ 0 ] . hdizs1wag1 [ 2
++ 3 * i ] = kb4gbgtxnr [ 6 * i + 5 ] ; } } fs1e1q0jmn = g5o314ttux [ 1 ] /
+muDoubleScalarSqrt ( ( g5o314ttux [ 0 ] * g5o314ttux [ 0 ] + g5o314ttux [ 1 ]
+* g5o314ttux [ 1 ] ) + g5o314ttux [ 2 ] * g5o314ttux [ 2 ] ) ;
+muDoubleScalarSinCos ( muDoubleScalarAtan2 ( g5o314ttux [ 2 ] , g5o314ttux [
+0 ] ) , & j4aqh4ovvp , & m3rmhklpup_idx_0 ) ; if ( fs1e1q0jmn > 1.0 ) {
+fs1e1q0jmn = 1.0 ; } else { if ( fs1e1q0jmn < - 1.0 ) { fs1e1q0jmn = - 1.0 ;
+} } muDoubleScalarSinCos ( muDoubleScalarAsin ( fs1e1q0jmn ) , &
+hie5vwg0j5_idx_1 , & m3rmhklpup_idx_1 ) ; _rtB -> caerwfkxfed [ 0 ] .
+ebsnxebvnu [ 0 ] = m3rmhklpup_idx_0 * m3rmhklpup_idx_1 ; _rtB -> caerwfkxfed
+[ 0 ] . ebsnxebvnu [ 1 ] = - ( hie5vwg0j5_idx_1 * m3rmhklpup_idx_0 ) ; _rtB
+-> caerwfkxfed [ 0 ] . ebsnxebvnu [ 2 ] = - j4aqh4ovvp ; _rtB -> caerwfkxfed
+[ 0 ] . ebsnxebvnu [ 3 ] = hie5vwg0j5_idx_1 ; _rtB -> caerwfkxfed [ 0 ] .
+ebsnxebvnu [ 4 ] = m3rmhklpup_idx_1 ; if ( ssIsSampleHit ( S , 1 , 0 ) ) {
+_rtB -> caerwfkxfed [ 0 ] . ebsnxebvnu [ 5 ] = _rtP -> caerwfkxfed . P_436 ;
+} _rtB -> caerwfkxfed [ 0 ] . ebsnxebvnu [ 6 ] = j4aqh4ovvp *
+m3rmhklpup_idx_1 ; _rtB -> caerwfkxfed [ 0 ] . ebsnxebvnu [ 7 ] = - (
+j4aqh4ovvp * hie5vwg0j5_idx_1 ) ; _rtB -> caerwfkxfed [ 0 ] . ebsnxebvnu [ 8
+] = m3rmhklpup_idx_0 ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB ->
+caerwfkxfed [ 0 ] . aeqn0dwiyu [ 0 ] = _rtP -> caerwfkxfed . P_437 [ 0 ] -
+_rtP -> caerwfkxfed . P_438 [ 0 ] ; _rtB -> caerwfkxfed [ 0 ] . aeqn0dwiyu [
+1 ] = _rtP -> caerwfkxfed . P_437 [ 1 ] - _rtP -> caerwfkxfed . P_438 [ 1 ] ;
+_rtB -> caerwfkxfed [ 0 ] . aeqn0dwiyu [ 2 ] = _rtP -> caerwfkxfed . P_437 [
+2 ] - _rtP -> caerwfkxfed . P_438 [ 2 ] ; } for ( i = 0 ; i < 3 ; i ++ ) {
+g5o314ttux [ i ] = _rtB -> caerwfkxfed [ 0 ] . ebsnxebvnu [ i + 6 ] * _rtB ->
+caerwfkxfed [ 0 ] . aeqn0dwiyu [ 2 ] + ( _rtB -> caerwfkxfed [ 0 ] .
+ebsnxebvnu [ i + 3 ] * _rtB -> caerwfkxfed [ 0 ] . aeqn0dwiyu [ 1 ] + _rtB ->
+caerwfkxfed [ 0 ] . ebsnxebvnu [ i ] * _rtB -> caerwfkxfed [ 0 ] . aeqn0dwiyu
+[ 0 ] ) ; } for ( i = 0 ; i < 3 ; i ++ ) { tmp_i [ i ] = _rtB -> caerwfkxfed
+[ 0 ] . ebsnxebvnu [ i + 6 ] * _rtB -> caerwfkxfed [ 0 ] . aeqn0dwiyu [ 2 ] +
+( _rtB -> caerwfkxfed [ 0 ] . ebsnxebvnu [ i + 3 ] * _rtB -> caerwfkxfed [ 0
+] . aeqn0dwiyu [ 1 ] + _rtB -> caerwfkxfed [ 0 ] . ebsnxebvnu [ i ] * _rtB ->
+caerwfkxfed [ 0 ] . aeqn0dwiyu [ 0 ] ) ; } bfhkqs4n5c = dfjrsfkrzj_idx_1 *
+tmp_i [ 0 ] ; j4aqh4ovvp = dfjrsfkrzj_idx_1 * g5o314ttux [ 2 ] ;
+dfjrsfkrzj_idx_1 = dfjrsfkrzj_idx_2 * g5o314ttux [ 0 ] ; hie5vwg0j5_idx_1 =
+dfjrsfkrzj_idx_2 * g5o314ttux [ 1 ] ; i2wxug2o5z_idx_2 = dfjrsfkrzj_idx_0 *
+g5o314ttux [ 2 ] ; dfjrsfkrzj_idx_2 = dfjrsfkrzj_idx_0 * g5o314ttux [ 1 ] -
+bfhkqs4n5c ; kga4k1wepx = _rtP -> caerwfkxfed . P_439 * dl53eqxcnz ; if (
+ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ] . fkab3gftxy = _rtP
+-> caerwfkxfed . P_447 ; } bfhkqs4n5c = ( ( ( ( ( _rtP -> caerwfkxfed . P_440
+* iuixc4td42 + kga4k1wepx ) + _rtP -> caerwfkxfed . P_441 * ezloddc3bo ) +
+_rtP -> caerwfkxfed . P_442 * d4ajp443jd ) + _rtP -> caerwfkxfed . P_443 *
+f03gfuzt3a ) + _rtP -> caerwfkxfed . P_444 * egqvaqn2aq ) + ( _rtP ->
+caerwfkxfed . P_445 * brnqslniho_idx_0 + _rtP -> caerwfkxfed . P_446 *
+brnqslniho_idx_2 ) * _rtB -> caerwfkxfed [ 0 ] . fkab3gftxy / ( _rtP ->
+caerwfkxfed . P_448 * eog11ippyj ) ; if ( ssIsSampleHit ( S , 1 , 0 ) ) {
+_rtB -> caerwfkxfed [ 0 ] . hrfwb1zucr = _rtP -> caerwfkxfed . P_449 ; _rtB
+-> caerwfkxfed [ 0 ] . gt2evclpan = _rtP -> caerwfkxfed . P_457 ; }
+kga4k1wepx = _rtP -> caerwfkxfed . P_459 * dl53eqxcnz ; if ( ssIsSampleHit (
+S , 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ] . bx4ynpdkup = _rtP -> caerwfkxfed
+. P_467 ; } dl53eqxcnz = ( ( ( ( ( _rtP -> caerwfkxfed . P_460 * iuixc4td42 +
+kga4k1wepx ) + _rtP -> caerwfkxfed . P_461 * ezloddc3bo ) + _rtP ->
+caerwfkxfed . P_462 * d4ajp443jd ) + _rtP -> caerwfkxfed . P_463 * f03gfuzt3a
+) + _rtP -> caerwfkxfed . P_464 * egqvaqn2aq ) + ( _rtP -> caerwfkxfed .
+P_465 * brnqslniho_idx_0 + _rtP -> caerwfkxfed . P_466 * brnqslniho_idx_2 ) *
+_rtB -> caerwfkxfed [ 0 ] . bx4ynpdkup / ( _rtP -> caerwfkxfed . P_468 *
+eog11ippyj ) ; g5o314ttux [ 2 ] = _rtP -> caerwfkxfed . P_469 [ 2 ] *
+ewjdtgxpyu * dl53eqxcnz ; g5o314ttux [ 0 ] = _rtP -> caerwfkxfed . P_469 [ 0
+] * ewjdtgxpyu * bfhkqs4n5c + ( j4aqh4ovvp - hie5vwg0j5_idx_1 ) ; g5o314ttux
+[ 1 ] = ( ( ( ( ( ( ( _rtP -> caerwfkxfed . P_450 * pg4naehcgd + _rtB ->
+caerwfkxfed [ 0 ] . hrfwb1zucr ) + _rtP -> caerwfkxfed . P_451 * cer2wchkb3 )
++ _rtP -> caerwfkxfed . P_452 * f03gfuzt3a ) + _rtP -> caerwfkxfed . P_453 *
+egqvaqn2aq ) + _rtP -> caerwfkxfed . P_454 * ezloddc3bo ) + _rtP ->
+caerwfkxfed . P_455 * d4ajp443jd ) + _rtP -> caerwfkxfed . P_456 *
+brnqslniho_idx_1 * _rtB -> caerwfkxfed [ 0 ] . gt2evclpan / ( _rtP ->
+caerwfkxfed . P_458 * eog11ippyj ) ) * ( _rtP -> caerwfkxfed . P_469 [ 1 ] *
+ewjdtgxpyu ) + ( dfjrsfkrzj_idx_1 - i2wxug2o5z_idx_2 ) ; j4aqh4ovvp =
+dfjrsfkrzj_idx_2 + g5o314ttux [ 2 ] ; if ( ssIsSampleHit ( S , 1 , 0 ) ) {
+ht1jy4ffdq = ( _rtP -> caerwfkxfed . P_470 [ 0 ] * pydf4ae103 + _rtP ->
+caerwfkxfed . P_470 [ 1 ] ) * pydf4ae103 + _rtP -> caerwfkxfed . P_470 [ 2 ]
+; if ( ht1jy4ffdq > _rtP -> caerwfkxfed . P_471 ) { _rtB -> caerwfkxfed [ 0 ]
+. ovijskpjrm = _rtP -> caerwfkxfed . P_471 ; } else if ( ht1jy4ffdq < _rtP ->
+caerwfkxfed . P_472 ) { _rtB -> caerwfkxfed [ 0 ] . ovijskpjrm = _rtP ->
+caerwfkxfed . P_472 ; } else { _rtB -> caerwfkxfed [ 0 ] . ovijskpjrm =
+ht1jy4ffdq ; } } if ( n5bcvxwpc1 > _rtP -> caerwfkxfed . P_473 ) { tmp_b =
+_rtP -> caerwfkxfed . P_473 ; } else if ( n5bcvxwpc1 < _rtP -> caerwfkxfed .
+P_474 ) { tmp_b = _rtP -> caerwfkxfed . P_474 ; } else { tmp_b = n5bcvxwpc1 ;
+} bfhkqs4n5c = _rtB -> caerwfkxfed [ 0 ] . ovijskpjrm / tmp_b ; if (
+ssIsSampleHit ( S , 1 , 0 ) ) { if ( ( _rtP -> caerwfkxfed . P_476 < 0.0 ) &&
+( _rtP -> caerwfkxfed . P_477 > muDoubleScalarFloor ( _rtP -> caerwfkxfed .
+P_477 ) ) ) { tmp_b = - muDoubleScalarPower ( - _rtP -> caerwfkxfed . P_476 ,
+_rtP -> caerwfkxfed . P_477 ) ; } else { tmp_b = muDoubleScalarPower ( _rtP
+-> caerwfkxfed . P_476 , _rtP -> caerwfkxfed . P_477 ) ; } _rtB ->
+caerwfkxfed [ 0 ] . f00yjfdrnl = _rtP -> caerwfkxfed . P_478 * tmp_b ;
+ht1jy4ffdq = _rtP -> caerwfkxfed . P_479 ; cqc1jds2od = _rtP -> caerwfkxfed .
+P_480 ; if ( ( _rtP -> caerwfkxfed . P_479 < 0.0 ) && ( _rtP -> caerwfkxfed .
+P_480 > muDoubleScalarFloor ( _rtP -> caerwfkxfed . P_480 ) ) ) { _rtB ->
+caerwfkxfed [ 0 ] . f1g203ugji = - muDoubleScalarPower ( - _rtP ->
+caerwfkxfed . P_479 , _rtP -> caerwfkxfed . P_480 ) ; } else { _rtB ->
+caerwfkxfed [ 0 ] . f1g203ugji = muDoubleScalarPower ( _rtP -> caerwfkxfed .
+P_479 , _rtP -> caerwfkxfed . P_480 ) ; } } pg4naehcgd = ( ( ( ( _rtP ->
+caerwfkxfed . P_475 [ 0 ] * fy45xp05wx + _rtP -> caerwfkxfed . P_475 [ 1 ] )
+* fy45xp05wx + _rtP -> caerwfkxfed . P_475 [ 2 ] ) * fy45xp05wx + _rtP ->
+caerwfkxfed . P_475 [ 3 ] ) * fy45xp05wx + _rtP -> caerwfkxfed . P_475 [ 4 ]
+) * ( phxjodriat * pl4jpj0hcq ) * _rtB -> caerwfkxfed [ 0 ] . f00yjfdrnl *
+_rtB -> caerwfkxfed [ 0 ] . f1g203ugji * _rtP -> caerwfkxfed . P_481 +
+bfhkqs4n5c ; bfhkqs4n5c += pg4naehcgd ; if ( ssIsSampleHit ( S , 1 , 0 ) ) {
+_rtB -> caerwfkxfed [ 0 ] . driv4tu0zq = _rtP -> caerwfkxfed . P_482 ; _rtB
+-> caerwfkxfed [ 0 ] . gpgpqklhqc = _rtP -> caerwfkxfed . P_483 ; } for ( i =
+0 ; i < 3 ; i ++ ) { tmp_i [ i ] = _rtB -> caerwfkxfed [ 0 ] . bhbjnow5zj [ i
++ 6 ] * _rtB -> caerwfkxfed [ 0 ] . gpgpqklhqc + ( _rtB -> caerwfkxfed [ 0 ]
+. bhbjnow5zj [ i + 3 ] * _rtB -> caerwfkxfed [ 0 ] . driv4tu0zq + _rtB ->
+caerwfkxfed [ 0 ] . bhbjnow5zj [ i ] * bfhkqs4n5c ) ; } dfjrsfkrzj_idx_0 =
+_rtP -> caerwfkxfed . P_484 [ 0 ] * n5bcvxwpc1 ; dfjrsfkrzj_idx_1 = _rtP ->
+caerwfkxfed . P_484 [ 1 ] * n5bcvxwpc1 ; dfjrsfkrzj_idx_2 = _rtP ->
+caerwfkxfed . P_484 [ 2 ] * n5bcvxwpc1 ; for ( i = 0 ; i < 3 ; i ++ ) { tmp_e
+[ i ] = _rtB -> caerwfkxfed [ 0 ] . bhbjnow5zj [ i + 6 ] * dfjrsfkrzj_idx_2 +
+( _rtB -> caerwfkxfed [ 0 ] . bhbjnow5zj [ i + 3 ] * dfjrsfkrzj_idx_1 + _rtB
+-> caerwfkxfed [ 0 ] . bhbjnow5zj [ i ] * dfjrsfkrzj_idx_0 ) ; } for ( i = 0
+; i < 3 ; i ++ ) { pj5dx0krjn [ i ] = _rtB -> caerwfkxfed [ 0 ] . bhbjnow5zj
+[ i + 6 ] * dfjrsfkrzj_idx_2 + ( _rtB -> caerwfkxfed [ 0 ] . bhbjnow5zj [ i +
+3 ] * dfjrsfkrzj_idx_1 + _rtB -> caerwfkxfed [ 0 ] . bhbjnow5zj [ i ] *
+dfjrsfkrzj_idx_0 ) ; } bfhkqs4n5c = brnqslniho_idx_1 * tmp_e [ 2 ] ;
+dl53eqxcnz = brnqslniho_idx_2 * tmp_e [ 0 ] ; n5bcvxwpc1 = brnqslniho_idx_0 *
+tmp_e [ 1 ] ; dfjrsfkrzj_idx_0 = bfhkqs4n5c - brnqslniho_idx_2 * pj5dx0krjn [
+1 ] ; dfjrsfkrzj_idx_1 = dl53eqxcnz - brnqslniho_idx_0 * pj5dx0krjn [ 2 ] ;
+dfjrsfkrzj_idx_2 = n5bcvxwpc1 - brnqslniho_idx_1 * pj5dx0krjn [ 0 ] ; if (
+ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ] . ghchhzc4wk [ 0 ]
+= _rtP -> caerwfkxfed . P_485 [ 0 ] - _rtP -> caerwfkxfed . P_486 [ 0 ] ;
+_rtB -> caerwfkxfed [ 0 ] . ghchhzc4wk [ 1 ] = _rtP -> caerwfkxfed . P_485 [
+1 ] - _rtP -> caerwfkxfed . P_486 [ 1 ] ; _rtB -> caerwfkxfed [ 0 ] .
+ghchhzc4wk [ 2 ] = _rtP -> caerwfkxfed . P_485 [ 2 ] - _rtP -> caerwfkxfed .
+P_486 [ 2 ] ; } bfhkqs4n5c = tmp_p [ 1 ] * _rtB -> caerwfkxfed [ 0 ] .
+ghchhzc4wk [ 2 ] ; dl53eqxcnz = tmp_p [ 2 ] * _rtB -> caerwfkxfed [ 0 ] .
+ghchhzc4wk [ 0 ] ; n5bcvxwpc1 = tmp_p [ 0 ] * _rtB -> caerwfkxfed [ 0 ] .
+ghchhzc4wk [ 1 ] ; pj5dx0krjn [ 0 ] = bfhkqs4n5c - bhgkwh20ck [ 2 ] * _rtB ->
+caerwfkxfed [ 0 ] . ghchhzc4wk [ 1 ] ; pj5dx0krjn [ 1 ] = dl53eqxcnz -
+bhgkwh20ck [ 0 ] * _rtB -> caerwfkxfed [ 0 ] . ghchhzc4wk [ 2 ] ; pj5dx0krjn
+[ 2 ] = n5bcvxwpc1 - bhgkwh20ck [ 1 ] * _rtB -> caerwfkxfed [ 0 ] .
+ghchhzc4wk [ 0 ] ; bfhkqs4n5c = _rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] .
+d44k1xtr5y [ 1 ] * peirsr4iz0 [ 2 ] ; dl53eqxcnz = _rtX -> caerwfkxfed [
+_rtDW -> fbn0fcdbpe ] . d44k1xtr5y [ 2 ] * peirsr4iz0 [ 0 ] ; n5bcvxwpc1 =
+_rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . d44k1xtr5y [ 0 ] * peirsr4iz0 [
+1 ] ; hie5vwg0j5_idx_1 = dl53eqxcnz ; if ( ssIsSampleHit ( S , 1 , 0 ) ) {
+for ( i = 0 ; i < 3 ; i ++ ) { _rtB -> caerwfkxfed [ 0 ] . nhvmgtbgis [ 3 * i
+] = kb4gbgtxnr [ 6 * i ] ; _rtB -> caerwfkxfed [ 0 ] . nhvmgtbgis [ 1 + 3 * i
+] = kb4gbgtxnr [ 6 * i + 1 ] ; _rtB -> caerwfkxfed [ 0 ] . nhvmgtbgis [ 2 + 3
+* i ] = kb4gbgtxnr [ 6 * i + 2 ] ; } } for ( i = 0 ; i < 3 ; i ++ ) { tmp_e [
+i ] = _rtB -> caerwfkxfed [ 0 ] . hdizs1wag1 [ i + 6 ] * _rtX -> caerwfkxfed
+[ _rtDW -> fbn0fcdbpe ] . d44k1xtr5y [ 2 ] + ( _rtB -> caerwfkxfed [ 0 ] .
+hdizs1wag1 [ i + 3 ] * _rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] .
+d44k1xtr5y [ 1 ] + _rtB -> caerwfkxfed [ 0 ] . hdizs1wag1 [ i ] * _rtX ->
+caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . d44k1xtr5y [ 0 ] ) ; } opyvqjfch4 [ 0 ]
+= ( ( ( ( tmp_i [ 0 ] + dfjrsfkrzj_idx_0 ) + pj5dx0krjn [ 0 ] ) + g5o314ttux
+[ 0 ] ) - tmp_e [ 0 ] ) - ( bfhkqs4n5c - _rtX -> caerwfkxfed [ _rtDW ->
+fbn0fcdbpe ] . d44k1xtr5y [ 2 ] * peirsr4iz0 [ 1 ] ) ; opyvqjfch4 [ 1 ] = ( (
+( ( tmp_i [ 1 ] + dfjrsfkrzj_idx_1 ) + pj5dx0krjn [ 1 ] ) + g5o314ttux [ 1 ]
+) - tmp_e [ 1 ] ) - ( hie5vwg0j5_idx_1 - _rtX -> caerwfkxfed [ _rtDW ->
+fbn0fcdbpe ] . d44k1xtr5y [ 0 ] * peirsr4iz0 [ 2 ] ) ; opyvqjfch4 [ 2 ] = ( (
+( ( tmp_i [ 2 ] + dfjrsfkrzj_idx_2 ) + pj5dx0krjn [ 2 ] ) + j4aqh4ovvp ) -
+tmp_e [ 2 ] ) - ( n5bcvxwpc1 - _rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] .
+d44k1xtr5y [ 1 ] * peirsr4iz0 [ 0 ] ) ; rt_mrdivide_U1d1x3_U2d3x3_Yd1x3_snf (
+opyvqjfch4 , _rtB -> caerwfkxfed [ 0 ] . nhvmgtbgis , _rtB -> caerwfkxfed [ 0
+] . awzqhtqebw ) ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed [
+0 ] . awy5xr45gr = _rtP -> caerwfkxfed . P_487 ; } bfhkqs4n5c = _rtP ->
+caerwfkxfed . P_488 * _rtB -> caerwfkxfed [ 0 ] . kbakpepngr ; dl53eqxcnz =
+_rtP -> caerwfkxfed . P_489 * _rtB -> caerwfkxfed [ 0 ] . auygoyaxlo ;
+n5bcvxwpc1 = _rtP -> caerwfkxfed . P_490 * _rtB -> caerwfkxfed [ 0 ] .
+klcy13tbuy ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ] .
+dywt5prltc = _rtP -> caerwfkxfed . P_491 ; } { int_T i ; real_T GM , opt_m2ft
+, deg2rad ; real_T * phi_ptr , * height_ptr ; boolean_T phi_wrapped = false ;
+real_T * phi = ( real_T * ) & _rtDW -> caerwfkxfed [ 0 ] . ajhxm1vpta ;
+real_T * h = ( real_T * ) & _rtDW -> caerwfkxfed [ 0 ] . cw3mgup5uj ;
+height_ptr = ( real_T * ) & n5bcvxwpc1 ; phi_ptr = ( real_T * ) & bfhkqs4n5c
+; opt_m2ft = 1.0 ; deg2rad = 1.0 ; GM = ( do3swhr3tu . fyja3tv3qw == 0 ) ?
+WGS84_GM_DEF : WGS84_GM_PRM ; { for ( i = 0 ; i < 1 ; i ++ ) { real_T fphi ,
+pi_2 ; phi [ i ] = phi_ptr [ i ] * deg2rad ; h [ i ] = height_ptr [ i ] /
+opt_m2ft ; if ( phi [ i ] > AERO_PI || phi [ i ] < - AERO_PI ) { phi [ i ] =
+muDoubleScalarRem ( phi [ i ] + AERO_PI , 2.0 * AERO_PI ) - AERO_PI ; } fphi
+= muDoubleScalarAbs ( phi [ i ] ) ; pi_2 = AERO_PI / 2.0 ; if ( fphi > pi_2 )
+{ real_T sign = phi [ i ] / fphi ; phi_wrapped = true ; phi [ i ] = sign * (
+pi_2 - ( fphi - pi_2 ) ) ; } else { phi_wrapped = false ; } }
+wgs84_taylor_series ( h , phi , opt_m2ft , & _rtB -> caerwfkxfed [ 0 ] .
+jiqj4tsfbl [ 2 ] , 1 ) ; _rtB -> caerwfkxfed [ 0 ] . jiqj4tsfbl [ 0 ] = _rtDW
+-> caerwfkxfed [ 0 ] . cs2gys33vf ; _rtB -> caerwfkxfed [ 0 ] . jiqj4tsfbl [
+1 ] = _rtDW -> caerwfkxfed [ 0 ] . cs2gys33vf ; } } if ( ssIsSampleHit ( S ,
+1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ] . fqvl4cz3pc = _rtP -> caerwfkxfed .
+P_493 ; } bfhkqs4n5c = _rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] .
+jo1on23gqr [ 1 ] * _rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . d44k1xtr5y [
+2 ] ; dl53eqxcnz = _rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . jo1on23gqr [
+2 ] * _rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . d44k1xtr5y [ 0 ] ;
+n5bcvxwpc1 = _rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . jo1on23gqr [ 0 ] *
+_rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . d44k1xtr5y [ 1 ] ; peirsr4iz0 [
+0 ] = bfhkqs4n5c - _rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . jo1on23gqr [
+2 ] * _rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . d44k1xtr5y [ 1 ] ;
+peirsr4iz0 [ 1 ] = dl53eqxcnz - _rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] .
+jo1on23gqr [ 0 ] * _rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . d44k1xtr5y [
+2 ] ; peirsr4iz0 [ 2 ] = n5bcvxwpc1 - _rtX -> caerwfkxfed [ _rtDW ->
+fbn0fcdbpe ] . jo1on23gqr [ 1 ] * _rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ]
+. d44k1xtr5y [ 0 ] ; for ( i = 0 ; i < 3 ; i ++ ) { _rtB -> caerwfkxfed [ 0 ]
+. bzpfvgxcae [ i ] = ( ( ( ( _rtP -> caerwfkxfed . P_492 * _rtB ->
+caerwfkxfed [ 0 ] . jiqj4tsfbl [ 0 ] * _rtB -> caerwfkxfed [ 0 ] . fqvl4cz3pc
+* gdgwwi2lmx [ i ] + _rtP -> caerwfkxfed . P_492 * _rtB -> caerwfkxfed [ 0 ]
+. jiqj4tsfbl [ 1 ] * _rtB -> caerwfkxfed [ 0 ] . fqvl4cz3pc * gdgwwi2lmx [ i
++ 3 ] ) + _rtP -> caerwfkxfed . P_492 * _rtB -> caerwfkxfed [ 0 ] .
+jiqj4tsfbl [ 2 ] * _rtB -> caerwfkxfed [ 0 ] . fqvl4cz3pc * gdgwwi2lmx [ i +
+6 ] ) + tmp [ i ] ) + tmp_p [ i ] ) / _rtB -> caerwfkxfed [ 0 ] . awy5xr45gr
++ peirsr4iz0 [ i ] ; } muDoubleScalarSinCos ( p0qnh2wrim [ 0 ] , & p0qnh2wrim
+[ 0 ] , & peirsr4iz0 [ 0 ] ) ; muDoubleScalarSinCos ( p0qnh2wrim [ 1 ] , &
+p0qnh2wrim [ 1 ] , & peirsr4iz0 [ 1 ] ) ; muDoubleScalarSinCos ( p0qnh2wrim [
+2 ] , & p0qnh2wrim [ 2 ] , & peirsr4iz0 [ 2 ] ) ; _rtB -> caerwfkxfed [ 0 ] .
+dj3m0zwauj = ( _rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . d44k1xtr5y [ 1 ]
+* p0qnh2wrim [ 0 ] + _rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . d44k1xtr5y
+[ 2 ] * peirsr4iz0 [ 0 ] ) * ( p0qnh2wrim [ 1 ] / peirsr4iz0 [ 1 ] ) + _rtX
+-> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . d44k1xtr5y [ 0 ] ; _rtB ->
+caerwfkxfed [ 0 ] . onw40tswnj = ( _rtX -> caerwfkxfed [ _rtDW -> fbn0fcdbpe
+] . d44k1xtr5y [ 1 ] * p0qnh2wrim [ 0 ] + _rtX -> caerwfkxfed [ _rtDW ->
+fbn0fcdbpe ] . d44k1xtr5y [ 2 ] * peirsr4iz0 [ 0 ] ) / peirsr4iz0 [ 1 ] ;
+_rtB -> caerwfkxfed [ 0 ] . gqcsbnkymj = _rtX -> caerwfkxfed [ _rtDW ->
+fbn0fcdbpe ] . d44k1xtr5y [ 1 ] * peirsr4iz0 [ 0 ] - _rtX -> caerwfkxfed [
+_rtDW -> fbn0fcdbpe ] . d44k1xtr5y [ 2 ] * p0qnh2wrim [ 0 ] ; if (
+ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ] . hdursxkoli = _rtP
+-> caerwfkxfed . P_494 ; _rtB -> caerwfkxfed [ 0 ] . hzun3ztizl = _rtP ->
+caerwfkxfed . P_495 ; } if ( hg4dcusulx >= _rtP -> caerwfkxfed . P_496 ) {
+_rtB -> caerwfkxfed [ 0 ] . ksv0ea2vma = _rtB -> caerwfkxfed [ 0 ] .
+hdursxkoli ; } else { _rtB -> caerwfkxfed [ 0 ] . ksv0ea2vma = _rtB ->
+caerwfkxfed [ 0 ] . hzun3ztizl ; } if ( ssIsSampleHit ( S , 1 , 0 ) && ( _rtB
+-> caerwfkxfed [ 0 ] . ksv0ea2vma != 0.0 ) ) { ssSetStopRequested ( S , 1 ) ;
+} if ( _rtB -> caerwfkxfed [ 0 ] . auygoyaxlo > _rtP -> caerwfkxfed . P_497 )
+{ _rtB -> caerwfkxfed [ 0 ] . fuduxrsc4d = _rtP -> caerwfkxfed . P_497 ; }
+else if ( _rtB -> caerwfkxfed [ 0 ] . auygoyaxlo < _rtP -> caerwfkxfed .
+P_498 ) { _rtB -> caerwfkxfed [ 0 ] . fuduxrsc4d = _rtP -> caerwfkxfed .
+P_498 ; } else { _rtB -> caerwfkxfed [ 0 ] . fuduxrsc4d = _rtB -> caerwfkxfed
+[ 0 ] . auygoyaxlo ; } if ( _rtB -> caerwfkxfed [ 0 ] . kbakpepngr > _rtP ->
+caerwfkxfed . P_499 ) { _rtB -> caerwfkxfed [ 0 ] . lvagqtztdp = _rtP ->
+caerwfkxfed . P_499 ; } else if ( _rtB -> caerwfkxfed [ 0 ] . kbakpepngr <
+_rtP -> caerwfkxfed . P_500 ) { _rtB -> caerwfkxfed [ 0 ] . lvagqtztdp = _rtP
+-> caerwfkxfed . P_500 ; } else { _rtB -> caerwfkxfed [ 0 ] . lvagqtztdp =
+_rtB -> caerwfkxfed [ 0 ] . kbakpepngr ; } bfhkqs4n5c = _rtP -> caerwfkxfed .
+P_501 * _rtB -> caerwfkxfed [ 0 ] . klcy13tbuy ; if ( ssIsSampleHit ( S , 1 ,
+0 ) ) { _rtB -> caerwfkxfed [ 0 ] . byamy2nve4 = _rtP -> caerwfkxfed . P_504
+; } if ( bfhkqs4n5c > _rtP -> caerwfkxfed . P_502 ) { tmp_b = _rtP ->
+caerwfkxfed . P_502 ; } else if ( bfhkqs4n5c < _rtP -> caerwfkxfed . P_503 )
+{ tmp_b = _rtP -> caerwfkxfed . P_503 ; } else { tmp_b = bfhkqs4n5c ; } _rtB
+-> caerwfkxfed [ 0 ] . h2e4rkx2g5 = _rtP -> caerwfkxfed . P_505 * tmp_b ; if
+( ssIsSampleHit ( S , 1 , 0 ) ) { iabk2erc5l = _rtB -> caerwfkxfed [ 0 ] .
+byamy2nve4 - _rtP -> caerwfkxfed . P_506 ; ht1jy4ffdq = _rtDW -> caerwfkxfed
+[ 0 ] . hke2uzx4jz ; _rtB -> caerwfkxfed [ 0 ] . nyigrkxhwb = ( _rtB ->
+caerwfkxfed [ 0 ] . byamy2nve4 != _rtDW -> caerwfkxfed [ 0 ] . hke2uzx4jz ) ;
+} muDoubleScalarSinCos ( _rtP -> caerwfkxfed . P_508 * _rtB -> caerwfkxfed [
+0 ] . fuduxrsc4d , & _rtB -> caerwfkxfed [ 0 ] . p1wrvvnjer [ 0 ] , & _rtB ->
+caerwfkxfed [ 0 ] . eo4gpdd3em [ 0 ] ) ; muDoubleScalarSinCos ( _rtP ->
+caerwfkxfed . P_508 * _rtB -> caerwfkxfed [ 0 ] . lvagqtztdp , & _rtB ->
+caerwfkxfed [ 0 ] . p1wrvvnjer [ 1 ] , & _rtB -> caerwfkxfed [ 0 ] .
+eo4gpdd3em [ 1 ] ) ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed
+[ 0 ] . a1anuud1cf = _rtDW -> caerwfkxfed [ 0 ] . eh3f4zmls1 ; } _rtB ->
+caerwfkxfed [ 0 ] . ngve2qpmxv = ( _rtB -> caerwfkxfed [ 0 ] . fuduxrsc4d !=
+_rtB -> caerwfkxfed [ 0 ] . a1anuud1cf ) ; if ( ssIsSampleHit ( S , 1 , 0 )
+&& ssIsMajorTimeStep ( S ) ) { if ( _rtB -> caerwfkxfed [ 0 ] . ngve2qpmxv )
+{ if ( ! _rtDW -> caerwfkxfed [ 0 ] . itpx4k3l1x ) { _rtDW -> caerwfkxfed [ 0
+] . itpx4k3l1x = true ; } } else { if ( _rtDW -> caerwfkxfed [ 0 ] .
+itpx4k3l1x ) { _rtDW -> caerwfkxfed [ 0 ] . itpx4k3l1x = false ; } } } if (
+_rtDW -> caerwfkxfed [ 0 ] . itpx4k3l1x ) { _rtB -> caerwfkxfed [ 0 ] .
+ddkpcgpld1 = _rtB -> caerwfkxfed [ 0 ] . p1wrvvnjer [ 0 ] ; _rtB ->
+caerwfkxfed [ 0 ] . oi05vmfege = _rtB -> caerwfkxfed [ 0 ] . eo4gpdd3em [ 0 ]
+; if ( ssIsSampleHit ( S , 1 , 0 ) ) { for ( s263_iter = 1 ; s263_iter <=
+_rtP -> caerwfkxfed . P_55 ; s263_iter ++ ) { if ( s263_iter > _rtP ->
+caerwfkxfed . P_56 ) { m3rmhklpup_idx_0 = _rtDW -> caerwfkxfed [ 0 ] .
+iij0cqpz3x [ 0 ] ; m3rmhklpup_idx_1 = _rtDW -> caerwfkxfed [ 0 ] . iij0cqpz3x
+[ 1 ] ; } else { m3rmhklpup_idx_0 = _rtB -> caerwfkxfed [ 0 ] . oi05vmfege ;
+m3rmhklpup_idx_1 = _rtB -> caerwfkxfed [ 0 ] . ddkpcgpld1 ; } kga4k1wepx =
+m3rmhklpup_idx_0 * _rtB -> caerwfkxfed [ 0 ] . ddkpcgpld1 + m3rmhklpup_idx_1
+* _rtB -> caerwfkxfed [ 0 ] . oi05vmfege ; if ( s263_iter == 1 ) { for ( i =
+0 ; i < 11 ; i ++ ) { po2mgfbnrk [ i ] = _rtP -> caerwfkxfed . P_53 [ i ] ;
+oqfpopasi5 [ i ] = _rtP -> caerwfkxfed . P_57 [ i ] ; } } po2mgfbnrk [
+s263_iter - 1 ] = kga4k1wepx ; fy45xp05wx = m3rmhklpup_idx_0 * _rtB ->
+caerwfkxfed [ 0 ] . oi05vmfege - m3rmhklpup_idx_1 * _rtB -> caerwfkxfed [ 0 ]
+. ddkpcgpld1 ; oqfpopasi5 [ s263_iter - 1 ] = fy45xp05wx ; _rtDW ->
+caerwfkxfed [ 0 ] . iij0cqpz3x [ 0 ] = fy45xp05wx ; _rtDW -> caerwfkxfed [ 0
+] . iij0cqpz3x [ 1 ] = kga4k1wepx ; } for ( i = 0 ; i < 11 ; i ++ ) { _rtB ->
+caerwfkxfed [ 0 ] . lj5hjdxqno [ i ] = _rtP -> caerwfkxfed . P_60 *
+oqfpopasi5 [ i ] ; _rtB -> caerwfkxfed [ 0 ] . mj5021tb34 [ i ] = _rtP ->
+caerwfkxfed . P_61 * po2mgfbnrk [ i ] ; } _rtB -> caerwfkxfed [ 0 ] .
+fe2rjh22yy = _rtP -> caerwfkxfed . P_62 ; _rtB -> caerwfkxfed [ 0 ] .
+a2tlwtflou = _rtP -> caerwfkxfed . P_63 ; } if ( ssIsMajorTimeStep ( S ) ) {
+srUpdateBC ( _rtDW -> caerwfkxfed [ 0 ] . kim0w0fqtt ) ; } } if (
+ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ] . ibojadrjwd =
+_rtDW -> caerwfkxfed [ 0 ] . bd2u1zxgbl ; _rtB -> caerwfkxfed [ 0 ] .
+bpxh0j2r0w = _rtDW -> caerwfkxfed [ 0 ] . eiplfbwsnl ; } _rtB -> caerwfkxfed
+[ 0 ] . lx4wi51cvm = ( ( _rtB -> caerwfkxfed [ 0 ] . lvagqtztdp != _rtB ->
+caerwfkxfed [ 0 ] . ibojadrjwd ) || ( _rtB -> caerwfkxfed [ 0 ] . h2e4rkx2g5
+!= _rtB -> caerwfkxfed [ 0 ] . bpxh0j2r0w ) ) ; kga4k1wepx = _rtB ->
+caerwfkxfed [ 0 ] . p1wrvvnjer [ 1 ] * _rtB -> caerwfkxfed [ 0 ] . p1wrvvnjer
+[ 1 ] ; fy45xp05wx = _rtB -> caerwfkxfed [ 0 ] . eo4gpdd3em [ 1 ] * _rtB ->
+caerwfkxfed [ 0 ] . eo4gpdd3em [ 1 ] ; if ( ssIsSampleHit ( S , 1 , 0 ) &&
+ssIsMajorTimeStep ( S ) ) { if ( _rtB -> caerwfkxfed [ 0 ] . lx4wi51cvm ) {
+if ( ! _rtDW -> caerwfkxfed [ 0 ] . clj4atglwt ) { _rtDW -> caerwfkxfed [ 0 ]
+. clj4atglwt = true ; } } else { if ( _rtDW -> caerwfkxfed [ 0 ] . clj4atglwt
+) { _rtDW -> caerwfkxfed [ 0 ] . clj4atglwt = false ; } } } if ( _rtDW ->
+caerwfkxfed [ 0 ] . clj4atglwt ) { if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB
+-> caerwfkxfed [ 0 ] . e1kq5pkbyj = _rtP -> caerwfkxfed . P_69 * _rtP ->
+caerwfkxfed . P_69 ; _rtB -> caerwfkxfed [ 0 ] . iojga44p03 = _rtP ->
+caerwfkxfed . P_70 * _rtP -> caerwfkxfed . P_70 ; _rtB -> caerwfkxfed [ 0 ] .
+hkglrhqx35 = _rtB -> caerwfkxfed [ 0 ] . iojga44p03 - _rtB -> caerwfkxfed [ 0
+] . e1kq5pkbyj ; } pl4jpj0hcq = muDoubleScalarSqrt ( _rtB -> caerwfkxfed [ 0
+] . iojga44p03 - kga4k1wepx * _rtB -> caerwfkxfed [ 0 ] . hkglrhqx35 ) * _rtB
+-> caerwfkxfed [ 0 ] . h2e4rkx2g5 ; fs1e1q0jmn = _rtB -> caerwfkxfed [ 0 ] .
+iojga44p03 + pl4jpj0hcq ; pl4jpj0hcq += _rtB -> caerwfkxfed [ 0 ] .
+e1kq5pkbyj ; _rtB -> caerwfkxfed [ 0 ] . duxoc3xdlj = _rtB -> caerwfkxfed [ 0
+] . p1wrvvnjer [ 1 ] / muDoubleScalarSqrt ( fs1e1q0jmn * fs1e1q0jmn / (
+pl4jpj0hcq * pl4jpj0hcq ) * fy45xp05wx + kga4k1wepx ) ; if ( ssIsSampleHit (
+S , 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ] . d30vrvdt22 = _rtP -> caerwfkxfed
+. P_71 ; } _rtB -> caerwfkxfed [ 0 ] . dd2hl32zs0 = muDoubleScalarSqrt ( _rtB
+-> caerwfkxfed [ 0 ] . d30vrvdt22 - _rtB -> caerwfkxfed [ 0 ] . duxoc3xdlj *
+_rtB -> caerwfkxfed [ 0 ] . duxoc3xdlj ) ; if ( ssIsMajorTimeStep ( S ) ) {
+srUpdateBC ( _rtDW -> caerwfkxfed [ 0 ] . hnf5uinkz4 ) ; } } if (
+ssIsSampleHit ( S , 1 , 0 ) ) { _rtDW -> caerwfkxfed [ 0 ] . j011fg2gb3 = 1U
+; for ( s214_iter = 1 ; s214_iter <= _rtP -> caerwfkxfed . P_579 ; s214_iter
+++ ) { tmp_f = ( int64_T ) s214_iter + _rtP -> caerwfkxfed . P_578 ; if (
+tmp_f > 2147483647LL ) { tmp_f = 2147483647LL ; } else { if ( tmp_f < -
+2147483648LL ) { tmp_f = - 2147483648LL ; } } bqwaymbknz = ( int32_T ) tmp_f
+; if ( _rtDW -> caerwfkxfed [ 0 ] . e3iwx01iqw [ 4 ] != 0 ) { if (
+ssIsFirstInitCond ( S ) ) { _rtB -> caerwfkxfed [ 0 ] . fuwyyk3ygs = _rtP ->
+caerwfkxfed . P_104 ; } if ( ssIsFirstInitCond ( S ) ) { _rtB -> caerwfkxfed
+[ 0 ] . lbmlimu05u = _rtP -> caerwfkxfed . P_105 ; } } for ( i = 0 ; i < 7 ;
+i ++ ) { _rtDW -> caerwfkxfed [ 0 ] . e3iwx01iqw [ i ] = 1U ; } for (
+s222_iter = 1 ; s222_iter <= bqwaymbknz ; s222_iter ++ ) { tmp_f = ( int64_T
+) s222_iter - _rtP -> caerwfkxfed . P_577 ; if ( tmp_f > 2147483647LL ) {
+tmp_f = 2147483647LL ; } else { if ( tmp_f < - 2147483648LL ) { tmp_f = -
+2147483648LL ; } } g02w4biiea = ( int32_T ) tmp_f ; o2xdurj54y = ( ( _rtB ->
+caerwfkxfed [ 0 ] . dd2hl32zs0 == _rtP -> caerwfkxfed . P_102 ) && ( _rtP ->
+caerwfkxfed . P_576 == g02w4biiea ) ) ; if ( o2xdurj54y ) { if ( ! _rtDW ->
+caerwfkxfed [ 0 ] . i0zutswifm ) { _rtDW -> caerwfkxfed [ 0 ] . i0zutswifm =
+true ; } if ( s214_iter == 1 ) { _rtDW -> caerwfkxfed [ 0 ] . f5ljezdpql = 4
+; } else { _rtDW -> caerwfkxfed [ 0 ] . kumsispcxc = 4 ; } _rtDW ->
+caerwfkxfed [ 0 ] . kdoua33mmz = 4 ; } else { if ( _rtDW -> caerwfkxfed [ 0 ]
+. i0zutswifm ) { _rtDW -> caerwfkxfed [ 0 ] . i0zutswifm = false ; } } if (
+_rtB -> caerwfkxfed [ 0 ] . nyigrkxhwb ) { tmp_f = ( int64_T ) g02w4biiea +
+_rtP -> caerwfkxfed . P_573 ; if ( tmp_f > 2147483647LL ) { tmp_f =
+2147483647LL ; } else { if ( tmp_f < - 2147483648LL ) { tmp_f = -
+2147483648LL ; } } s263_iter = ( int32_T ) tmp_f - 1 ; tmp_f = ( int64_T )
+s214_iter + _rtP -> caerwfkxfed . P_572 ; if ( tmp_f > 2147483647LL ) { tmp_f
+= 2147483647LL ; } else { if ( tmp_f < - 2147483648LL ) { tmp_f = -
+2147483648LL ; } } i = ( int32_T ) tmp_f - 1 ; if ( _rtDW -> caerwfkxfed [ 0
+] . e3iwx01iqw [ 5 ] < 2 ) { _rtDW -> caerwfkxfed [ 0 ] . e3iwx01iqw [ 5 ] =
+2U ; memcpy ( & _rtB -> caerwfkxfed [ 0 ] . h5oxnzzoju [ 0 ] , & _rtDW ->
+caerwfkxfed [ 0 ] . kjklqetho5 [ 0 ] , 169U * sizeof ( real_T ) ) ; } _rtB ->
+caerwfkxfed [ 0 ] . h5oxnzzoju [ s263_iter + 13 * i ] = _rtP -> caerwfkxfed .
+P_95 [ 13 * i + s263_iter ] * iabk2erc5l + _rtP -> caerwfkxfed . P_94 [ 13 *
+i + s263_iter ] ; for ( i = 0 ; i < 169 ; i ++ ) { if ( s214_iter > _rtP ->
+caerwfkxfed . P_575 ) { nosdiig03u [ i ] = _rtDW -> caerwfkxfed [ 0 ] .
+alepk0hj0a [ i ] ; } else { nosdiig03u [ i ] = _rtP -> caerwfkxfed . P_97 [ i
+] ; } } if ( g02w4biiea != 0 ) { tmp_f = ( int64_T ) s214_iter + _rtP ->
+caerwfkxfed . P_574 ; if ( tmp_f > 2147483647LL ) { tmp_f = 2147483647LL ; }
+else { if ( tmp_f < - 2147483648LL ) { tmp_f = - 2147483648LL ; } } i = (
+int32_T ) tmp_f - 1 ; if ( _rtDW -> caerwfkxfed [ 0 ] . e3iwx01iqw [ 6 ] < 2
+) { _rtDW -> caerwfkxfed [ 0 ] . e3iwx01iqw [ 6 ] = 2U ; memcpy ( & _rtB ->
+caerwfkxfed [ 0 ] . a4x0qt0evj [ 0 ] , & nosdiig03u [ 0 ] , 169U * sizeof (
+real_T ) ) ; } _rtB -> caerwfkxfed [ 0 ] . a4x0qt0evj [ i + 13 * ( g02w4biiea
+- 1 ) ] = _rtP -> caerwfkxfed . P_95 [ ( g02w4biiea - 1 ) * 13 + i ] *
+iabk2erc5l + _rtP -> caerwfkxfed . P_94 [ ( g02w4biiea - 1 ) * 13 + i ] ; for
+( i = 0 ; i < 169 ; i ++ ) { augykoos5l [ i ] = _rtP -> caerwfkxfed . P_91 *
+_rtB -> caerwfkxfed [ 0 ] . a4x0qt0evj [ i ] ; } _rtDW -> caerwfkxfed [ 0 ] .
+mwzbhxf5ad = 4 ; } else { memcpy ( & augykoos5l [ 0 ] , & nosdiig03u [ 0 ] ,
+169U * sizeof ( real_T ) ) ; _rtDW -> caerwfkxfed [ 0 ] . fjwc31wtut = 4 ; }
+for ( i = 0 ; i < 169 ; i ++ ) { _rtB -> caerwfkxfed [ 0 ] . kzffzxfjod [ i ]
+= _rtB -> caerwfkxfed [ 0 ] . h5oxnzzoju [ i ] + augykoos5l [ i ] ; } _rtDW
+-> caerwfkxfed [ 0 ] . f1hduiwxi5 = 4 ; } kga4k1wepx = ( real_T ) g02w4biiea
++ _rtP -> caerwfkxfed . P_103 ; tmp_m [ 0 ] = _rtB -> caerwfkxfed [ 0 ] .
+fe2rjh22yy ; tmp_m [ 1 ] = _rtB -> caerwfkxfed [ 0 ] . oi05vmfege ;
+l4b0e1ozlo [ 0 ] = _rtB -> caerwfkxfed [ 0 ] . a2tlwtflou ; l4b0e1ozlo [ 1 ]
+= _rtB -> caerwfkxfed [ 0 ] . ddkpcgpld1 ; for ( i = 0 ; i < 11 ; i ++ ) {
+tmp_m [ i + 2 ] = _rtB -> caerwfkxfed [ 0 ] . lj5hjdxqno [ i ] ; l4b0e1ozlo [
+i + 2 ] = _rtB -> caerwfkxfed [ 0 ] . mj5021tb34 [ i ] ; } if ( g02w4biiea ==
+0 ) { m3rmhklpup_idx_0 = ( real_T ) s214_iter + _rtP -> caerwfkxfed . P_75 ;
+_rtB -> caerwfkxfed [ 0 ] . fuwyyk3ygs = _rtB -> caerwfkxfed [ 0 ] .
+kzffzxfjod [ ( ( ( int32_T ) m3rmhklpup_idx_0 - 1 ) * 13 + ( int32_T ) _rtP
+-> caerwfkxfed . P_75 ) - 1 ] * tmp_m [ ( int32_T ) kga4k1wepx - 1 ] * _rtP
+-> caerwfkxfed . P_76 ; _rtB -> caerwfkxfed [ 0 ] . lbmlimu05u = _rtB ->
+caerwfkxfed [ 0 ] . kzffzxfjod [ ( ( ( int32_T ) m3rmhklpup_idx_0 - 1 ) * 13
++ ( int32_T ) _rtP -> caerwfkxfed . P_75 ) - 1 ] * l4b0e1ozlo [ ( int32_T )
+kga4k1wepx - 1 ] * _rtP -> caerwfkxfed . P_77 ; _rtDW -> caerwfkxfed [ 0 ] .
+igghyvehej = 4 ; } else { m3rmhklpup_idx_0 = ( real_T ) s214_iter + _rtP ->
+caerwfkxfed . P_78 ; m3rmhklpup_idx_1 = ( real_T ) g02w4biiea + _rtP ->
+caerwfkxfed . P_78 ; _rtB -> caerwfkxfed [ 0 ] . fuwyyk3ygs = _rtB ->
+caerwfkxfed [ 0 ] . kzffzxfjod [ ( ( ( int32_T ) m3rmhklpup_idx_0 - 1 ) * 13
++ ( int32_T ) m3rmhklpup_idx_1 ) - 1 ] * tmp_m [ ( int32_T ) kga4k1wepx - 1 ]
++ _rtB -> caerwfkxfed [ 0 ] . kzffzxfjod [ ( ( g02w4biiea - 1 ) * 13 + (
+int32_T ) ( ( real_T ) s214_iter + _rtP -> caerwfkxfed . P_79 ) ) - 1 ] *
+l4b0e1ozlo [ ( int32_T ) kga4k1wepx - 1 ] ; _rtB -> caerwfkxfed [ 0 ] .
+lbmlimu05u = _rtB -> caerwfkxfed [ 0 ] . kzffzxfjod [ ( ( ( int32_T )
+m3rmhklpup_idx_0 - 1 ) * 13 + ( int32_T ) m3rmhklpup_idx_1 ) - 1 ] *
+l4b0e1ozlo [ ( int32_T ) kga4k1wepx - 1 ] - _rtB -> caerwfkxfed [ 0 ] .
+kzffzxfjod [ ( ( g02w4biiea - 1 ) * 13 + ( int32_T ) ( ( real_T ) s214_iter +
+_rtP -> caerwfkxfed . P_79 ) ) - 1 ] * tmp_m [ ( int32_T ) kga4k1wepx - 1 ] ;
+_rtDW -> caerwfkxfed [ 0 ] . inxhyguz35 = 4 ; } _rtB -> caerwfkxfed [ 0 ] .
+c3sdn005w2 = _rtB -> caerwfkxfed [ 0 ] . lx4wi51cvm ; if ( _rtB ->
+caerwfkxfed [ 0 ] . c3sdn005w2 ) { tmp_f = ( int64_T ) s214_iter + _rtP ->
+caerwfkxfed . P_569 ; if ( tmp_f > 2147483647LL ) { tmp_f = 2147483647LL ; }
+else { if ( tmp_f < - 2147483648LL ) { tmp_f = - 2147483648LL ; } }
+fnrnpu4ie4_idx_0 = ( int32_T ) tmp_f ; tmp_f = ( int64_T ) g02w4biiea + _rtP
+-> caerwfkxfed . P_569 ; if ( tmp_f > 2147483647LL ) { tmp_f = 2147483647LL ;
+} else { if ( tmp_f < - 2147483648LL ) { tmp_f = - 2147483648LL ; } }
+fnrnpu4ie4_idx_1 = ( int32_T ) tmp_f ; if ( s214_iter == g02w4biiea ) { tmp_f
+= ( int64_T ) g02w4biiea - _rtP -> caerwfkxfed . P_558 ; if ( tmp_f >
+2147483647LL ) { tmp_f = 2147483647LL ; } else { if ( tmp_f < - 2147483648LL
+) { tmp_f = - 2147483648LL ; } } tmp_f = ( int64_T ) _rtP -> caerwfkxfed .
+P_559 * ( int32_T ) tmp_f ; if ( tmp_f > 2147483647LL ) { tmp_f =
+2147483647LL ; } else { if ( tmp_f < - 2147483648LL ) { tmp_f = -
+2147483648LL ; } } s263_iter = ( int32_T ) tmp_f ; tmp_f = ( int64_T )
+s214_iter + s263_iter ; if ( tmp_f > 2147483647LL ) { tmp_f = 2147483647LL ;
+} else { if ( tmp_f < - 2147483648LL ) { tmp_f = - 2147483648LL ; } } _rtB ->
+caerwfkxfed [ 0 ] . b3uoo2ghc1 = _rtDW -> caerwfkxfed [ 0 ] . dneaxvt4b0 [ (
+int32_T ) tmp_f - 1 ] * _rtB -> caerwfkxfed [ 0 ] . dd2hl32zs0 ; tmp_f = (
+int64_T ) s214_iter + s263_iter ; if ( tmp_f > 2147483647LL ) { tmp_f =
+2147483647LL ; } else { if ( tmp_f < - 2147483648LL ) { tmp_f = -
+2147483648LL ; } } _rtB -> caerwfkxfed [ 0 ] . dyhurjpq0i = _rtDW ->
+caerwfkxfed [ 0 ] . kkbrjpfk4c [ ( ( s214_iter - 1 ) * 13 + g02w4biiea ) - 1
+] * _rtB -> caerwfkxfed [ 0 ] . dd2hl32zs0 + _rtDW -> caerwfkxfed [ 0 ] .
+dneaxvt4b0 [ ( int32_T ) tmp_f - 1 ] * _rtB -> caerwfkxfed [ 0 ] . duxoc3xdlj
+; _rtDW -> caerwfkxfed [ 0 ] . mhfcrlq0jr = 4 ; } else if ( ( s214_iter == 1
+) && ( g02w4biiea == 0 ) ) { _rtB -> caerwfkxfed [ 0 ] . b3uoo2ghc1 = _rtDW
+-> caerwfkxfed [ 0 ] . dneaxvt4b0 [ 0 ] * _rtB -> caerwfkxfed [ 0 ] .
+duxoc3xdlj ; tmp_f = _rtP -> caerwfkxfed . P_560 ; if ( tmp_f > 2147483647LL
+) { tmp_f = 2147483647LL ; } else { if ( tmp_f < - 2147483648LL ) { tmp_f = -
+2147483648LL ; } } _rtB -> caerwfkxfed [ 0 ] . dyhurjpq0i = _rtDW ->
+caerwfkxfed [ 0 ] . kkbrjpfk4c [ ( int32_T ) tmp_f - 1 ] * _rtB ->
+caerwfkxfed [ 0 ] . duxoc3xdlj - _rtDW -> caerwfkxfed [ 0 ] . dneaxvt4b0 [ 0
+] * _rtB -> caerwfkxfed [ 0 ] . dd2hl32zs0 ; _rtDW -> caerwfkxfed [ 0 ] .
+mvcumqx4b0 = 4 ; } else { if ( ( s214_iter > 1 ) && ( s214_iter != g02w4biiea
+) ) { tmp_f = ( int64_T ) s214_iter - _rtP -> caerwfkxfed . P_563 ; if (
+tmp_f > 2147483647LL ) { tmp_f = 2147483647LL ; } else { if ( tmp_f < -
+2147483648LL ) { tmp_f = - 2147483648LL ; } } tmp_k = ( int64_T ) g02w4biiea
++ _rtP -> caerwfkxfed . P_562 ; if ( tmp_k > 2147483647LL ) { tmp_k =
+2147483647LL ; } else { if ( tmp_k < - 2147483648LL ) { tmp_k = -
+2147483648LL ; } } i = ( int32_T ) tmp_k ; tmp_k = ( int64_T ) s214_iter +
+_rtP -> caerwfkxfed . P_565 ; if ( tmp_k > 2147483647LL ) { tmp_k =
+2147483647LL ; } else { if ( tmp_k < - 2147483648LL ) { tmp_k = -
+2147483648LL ; } } s263_iter = ( int32_T ) tmp_k ; tmp_k = ( int64_T )
+g02w4biiea + _rtP -> caerwfkxfed . P_565 ; if ( tmp_k > 2147483647LL ) {
+tmp_k = 2147483647LL ; } else { if ( tmp_k < - 2147483648LL ) { tmp_k = -
+2147483648LL ; } } iqi3zgx1ez_idx_1 = ( int32_T ) tmp_k ; tmp_k = ( int64_T )
+_rtP -> caerwfkxfed . P_567 * g02w4biiea ; if ( tmp_k > 2147483647LL ) {
+tmp_k = 2147483647LL ; } else { if ( tmp_k < - 2147483648LL ) { tmp_k = -
+2147483648LL ; } } gjwdsuon2d = ( int32_T ) tmp_k ; tmp_k = ( int64_T )
+s214_iter - _rtP -> caerwfkxfed . P_564 ; if ( tmp_k > 2147483647LL ) { tmp_k
+= 2147483647LL ; } else { if ( tmp_k < - 2147483648LL ) { tmp_k = -
+2147483648LL ; } } tmp_c = ( int64_T ) s214_iter + gjwdsuon2d ; if ( tmp_c >
+2147483647LL ) { tmp_c = 2147483647LL ; } else { if ( tmp_c < - 2147483648LL
+) { tmp_c = - 2147483648LL ; } } if ( ( ( int32_T ) tmp_k >= g02w4biiea ) >
+_rtP -> caerwfkxfed . P_82 ) { tmp_b = _rtDW -> caerwfkxfed [ 0 ] .
+kkbrjpfk4c [ ( ( ( int32_T ) tmp_f - 1 ) * 13 + i ) - 1 ] ; } else { tmp_b =
+_rtP -> caerwfkxfed . P_80 ; } _rtB -> caerwfkxfed [ 0 ] . dyhurjpq0i = (
+_rtDW -> caerwfkxfed [ 0 ] . kkbrjpfk4c [ ( ( s214_iter - 1 ) * 13 + i ) - 1
+] * _rtB -> caerwfkxfed [ 0 ] . duxoc3xdlj - _rtDW -> caerwfkxfed [ 0 ] .
+dneaxvt4b0 [ ( int32_T ) tmp_c - 1 ] * _rtB -> caerwfkxfed [ 0 ] . dd2hl32zs0
+) - _rtP -> caerwfkxfed . P_83 [ ( ( s263_iter - 1 ) * 13 + iqi3zgx1ez_idx_1
+) - 1 ] * tmp_b ; tmp_f = ( int64_T ) s214_iter - _rtP -> caerwfkxfed . P_568
+; if ( tmp_f > 2147483647LL ) { tmp_f = 2147483647LL ; } else { if ( tmp_f <
+- 2147483648LL ) { tmp_f = - 2147483648LL ; } } if ( ( ( int32_T ) tmp_f >=
+g02w4biiea ) > _rtP -> caerwfkxfed . P_84 ) { tmp_f = ( int64_T ) s214_iter -
+_rtP -> caerwfkxfed . P_566 ; if ( tmp_f > 2147483647LL ) { tmp_f =
+2147483647LL ; } else { if ( tmp_f < - 2147483648LL ) { tmp_f = -
+2147483648LL ; } } tmp_f = ( int64_T ) ( int32_T ) tmp_f + gjwdsuon2d ; if (
+tmp_f > 2147483647LL ) { tmp_f = 2147483647LL ; } else { if ( tmp_f < -
+2147483648LL ) { tmp_f = - 2147483648LL ; } } hie5vwg0j5_idx_1 = _rtDW ->
+caerwfkxfed [ 0 ] . dneaxvt4b0 [ ( int32_T ) tmp_f - 1 ] ; } else {
+hie5vwg0j5_idx_1 = _rtP -> caerwfkxfed . P_81 ; } tmp_f = ( int64_T )
+s214_iter + gjwdsuon2d ; if ( tmp_f > 2147483647LL ) { tmp_f = 2147483647LL ;
+} else { if ( tmp_f < - 2147483648LL ) { tmp_f = - 2147483648LL ; } } _rtB ->
+caerwfkxfed [ 0 ] . b3uoo2ghc1 = _rtDW -> caerwfkxfed [ 0 ] . dneaxvt4b0 [ (
+int32_T ) tmp_f - 1 ] * _rtB -> caerwfkxfed [ 0 ] . duxoc3xdlj - _rtP ->
+caerwfkxfed . P_83 [ ( ( s263_iter - 1 ) * 13 + iqi3zgx1ez_idx_1 ) - 1 ] *
+hie5vwg0j5_idx_1 ; _rtDW -> caerwfkxfed [ 0 ] . cbw4t0yn4o = 4 ; } } if (
+_rtDW -> caerwfkxfed [ 0 ] . e3iwx01iqw [ 2 ] < 2 ) { _rtDW -> caerwfkxfed [
+0 ] . e3iwx01iqw [ 2 ] = 2U ; memcpy ( & _rtB -> caerwfkxfed [ 0 ] .
+oomp1vxa3q [ 0 ] , & _rtDW -> caerwfkxfed [ 0 ] . kkbrjpfk4c [ 0 ] , 169U *
+sizeof ( real_T ) ) ; } _rtB -> caerwfkxfed [ 0 ] . oomp1vxa3q [ (
+fnrnpu4ie4_idx_1 + 13 * ( fnrnpu4ie4_idx_0 - 1 ) ) - 1 ] = _rtB ->
+caerwfkxfed [ 0 ] . dyhurjpq0i ; if ( _rtDW -> caerwfkxfed [ 0 ] . e3iwx01iqw
+[ 3 ] < 2 ) { _rtDW -> caerwfkxfed [ 0 ] . e3iwx01iqw [ 3 ] = 2U ; memcpy ( &
+_rtB -> caerwfkxfed [ 0 ] . hgjo31ls2t [ 0 ] , & _rtDW -> caerwfkxfed [ 0 ] .
+dneaxvt4b0 [ 0 ] , 169U * sizeof ( real_T ) ) ; } tmp_f = ( int64_T )
+fnrnpu4ie4_idx_1 - _rtP -> caerwfkxfed . P_570 ; if ( tmp_f > 2147483647LL )
+{ tmp_f = 2147483647LL ; } else { if ( tmp_f < - 2147483648LL ) { tmp_f = -
+2147483648LL ; } } tmp_f = ( int64_T ) _rtP -> caerwfkxfed . P_571 * (
+int32_T ) tmp_f ; if ( tmp_f > 2147483647LL ) { tmp_f = 2147483647LL ; } else
+{ if ( tmp_f < - 2147483648LL ) { tmp_f = - 2147483648LL ; } } _rtB ->
+caerwfkxfed [ 0 ] . hgjo31ls2t [ ( int32_T ) ( ( real_T ) fnrnpu4ie4_idx_0 +
+( real_T ) ( int32_T ) tmp_f ) - 1 ] = _rtB -> caerwfkxfed [ 0 ] . b3uoo2ghc1
+; _rtDW -> caerwfkxfed [ 0 ] . ne4hlioaea = 4 ; } for ( i = 0 ; i < 169 ; i
+++ ) { if ( _rtB -> caerwfkxfed [ 0 ] . nyigrkxhwb ) { _rtDW -> caerwfkxfed [
+0 ] . kjklqetho5 [ i ] = _rtB -> caerwfkxfed [ 0 ] . h5oxnzzoju [ i ] ; _rtDW
+-> caerwfkxfed [ 0 ] . alepk0hj0a [ i ] = augykoos5l [ i ] ; } if ( _rtB ->
+caerwfkxfed [ 0 ] . c3sdn005w2 ) { _rtDW -> caerwfkxfed [ 0 ] . kkbrjpfk4c [
+i ] = _rtB -> caerwfkxfed [ 0 ] . oomp1vxa3q [ i ] ; _rtDW -> caerwfkxfed [ 0
+] . dneaxvt4b0 [ i ] = _rtB -> caerwfkxfed [ 0 ] . hgjo31ls2t [ i ] ; } }
+_rtDW -> caerwfkxfed [ 0 ] . bpoec53nus = 4 ; } } _rtB -> caerwfkxfed [ 0 ] .
+js1kstlgfq = _rtP -> caerwfkxfed . P_512 ; } bfhkqs4n5c = ssGetT ( S ) ; if (
+ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ] . lhes0ureuz = _rtP
+-> caerwfkxfed . P_513 ; } bfhkqs4n5c = ( bfhkqs4n5c >= _rtB -> caerwfkxfed [
+0 ] . lhes0ureuz ) ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed
+[ 0 ] . ny41sl05os = _rtP -> caerwfkxfed . P_514 ; } _rtB -> caerwfkxfed [ 0
+] . efalau5ccr = ( ( bfhkqs4n5c != 0.0 ) && ( _rtB -> caerwfkxfed [ 0 ] .
+ny41sl05os != 0.0 ) ) ; if ( ssIsSampleHit ( S , 1 , 0 ) && ssIsMajorTimeStep
+( S ) ) { if ( _rtB -> caerwfkxfed [ 0 ] . efalau5ccr ) { if ( ! _rtDW ->
+caerwfkxfed [ 0 ] . dtafal24mu ) { ( ( f1xhd02yjc * ) ssGetContStates ( S ) )
+-> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] .
+dh1nyl2cji = _rtP -> caerwfkxfed . P_48 ; _rtDW -> caerwfkxfed [ 0 ] .
+dtafal24mu = true ; } } else { if ( _rtDW -> caerwfkxfed [ 0 ] . dtafal24mu )
+{ _rtDW -> caerwfkxfed [ 0 ] . dtafal24mu = false ; } } } if ( _rtDW ->
+caerwfkxfed [ 0 ] . dtafal24mu ) { if ( ( ( f1xhd02yjc * ) ssGetContStates (
+S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) ->
+fbn0fcdbpe ] . dh1nyl2cji >= _rtP -> caerwfkxfed . P_49 ) { if ( ( (
+f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . dh1nyl2cji != _rtP -> caerwfkxfed .
+P_49 ) { ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( (
+ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . dh1nyl2cji = _rtP ->
+caerwfkxfed . P_49 ; ssSetSolverNeedsReset ( S ) ; } } else if ( ( (
+f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . dh1nyl2cji <= _rtP -> caerwfkxfed .
+P_50 ) { if ( ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( (
+ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . dh1nyl2cji != _rtP ->
+caerwfkxfed . P_50 ) { ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) ->
+caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] .
+dh1nyl2cji = _rtP -> caerwfkxfed . P_50 ; ssSetSolverNeedsReset ( S ) ; } }
+_rtB -> caerwfkxfed [ 0 ] . i5ioc5v3ei = ( ( f1xhd02yjc * ) ssGetContStates (
+S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) ->
+fbn0fcdbpe ] . dh1nyl2cji ; if ( ssIsMajorTimeStep ( S ) ) { srUpdateBC (
+_rtDW -> caerwfkxfed [ 0 ] . feyylggvjp ) ; } } if ( ssIsSampleHit ( S , 1 ,
+0 ) ) { _rtB -> caerwfkxfed [ 0 ] . j10h23lpqy = _rtP -> caerwfkxfed . P_515
+; } _rtB -> caerwfkxfed [ 0 ] . kkfnu3abqc = ( ( bfhkqs4n5c != 0.0 ) && (
+_rtB -> caerwfkxfed [ 0 ] . j10h23lpqy != 0.0 ) ) ; gamgx1mju3 ( S , _rtB ->
+caerwfkxfed [ 0 ] . kkfnu3abqc , & _rtB -> caerwfkxfed [ 0 ] . kjarfumpbl , &
+_rtDW -> caerwfkxfed [ 0 ] . kjarfumpbl , ( bw1rqnuzxz * ) & _rtP ->
+caerwfkxfed . kjarfumpbl , & ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) ->
+caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] .
+kjarfumpbl ) ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ]
+. bgxedzyhv5 = _rtP -> caerwfkxfed . P_516 ; } _rtB -> caerwfkxfed [ 0 ] .
+n0ftniihni = ( ( bfhkqs4n5c != 0.0 ) && ( _rtB -> caerwfkxfed [ 0 ] .
+bgxedzyhv5 != 0.0 ) ) ; gamgx1mju3 ( S , _rtB -> caerwfkxfed [ 0 ] .
+n0ftniihni , & _rtB -> caerwfkxfed [ 0 ] . gamgx1mju3p , & _rtDW ->
+caerwfkxfed [ 0 ] . gamgx1mju3p , ( bw1rqnuzxz * ) & _rtP -> caerwfkxfed .
+gamgx1mju3p , & ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ (
+( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . gamgx1mju3p ) ;
+bhgkwh20ck [ 0 ] = ( _rtB -> caerwfkxfed [ 0 ] . js1kstlgfq -
+muDoubleScalarCos ( _rtP -> caerwfkxfed . P_517 [ 0 ] * _rtB -> caerwfkxfed [
+0 ] . i5ioc5v3ei ) ) * _rtP -> caerwfkxfed . P_518 [ 0 ] * _rtP ->
+caerwfkxfed . P_519 ; bhgkwh20ck [ 1 ] = ( _rtB -> caerwfkxfed [ 0 ] .
+js1kstlgfq - muDoubleScalarCos ( _rtP -> caerwfkxfed . P_517 [ 1 ] * _rtB ->
+caerwfkxfed [ 0 ] . kjarfumpbl . nulslvd1ds ) ) * _rtP -> caerwfkxfed . P_518
+[ 1 ] * _rtP -> caerwfkxfed . P_519 ; bhgkwh20ck [ 2 ] = ( _rtB ->
+caerwfkxfed [ 0 ] . js1kstlgfq - muDoubleScalarCos ( _rtP -> caerwfkxfed .
+P_517 [ 2 ] * _rtB -> caerwfkxfed [ 0 ] . gamgx1mju3p . nulslvd1ds ) ) * _rtP
+-> caerwfkxfed . P_518 [ 2 ] * _rtP -> caerwfkxfed . P_519 ; ewjdtgxpyu =
+_rtP -> caerwfkxfed . P_520 * hg4dcusulx ; fs1e1q0jmn = _rtP -> caerwfkxfed .
+P_521 * eog11ippyj ; if ( ewjdtgxpyu > _rtP -> caerwfkxfed . P_522 ) {
+bfhkqs4n5c = _rtP -> caerwfkxfed . P_522 ; } else if ( ewjdtgxpyu < _rtP ->
+caerwfkxfed . P_523 ) { bfhkqs4n5c = _rtP -> caerwfkxfed . P_523 ; } else {
+bfhkqs4n5c = ewjdtgxpyu ; } kga4k1wepx = 0.000823 * bfhkqs4n5c + 0.177 ; if (
+kga4k1wepx < 0.0 ) { kga4k1wepx = - muDoubleScalarPower ( - kga4k1wepx , 1.2
+) ; } else { kga4k1wepx = muDoubleScalarPower ( kga4k1wepx , 1.2 ) ; }
+fy45xp05wx = bfhkqs4n5c / kga4k1wepx ; if ( ssIsSampleHit ( S , 1 , 0 ) ) {
+ht1jy4ffdq = _rtP -> caerwfkxfed . P_524 ; _rtB -> caerwfkxfed [ 0 ] .
+lb5y2bsy2z = _rtP -> caerwfkxfed . P_525 * _rtP -> caerwfkxfed . P_524 ; } if
+( ewjdtgxpyu > _rtP -> caerwfkxfed . P_526 ) { hie5vwg0j5_idx_1 = _rtP ->
+caerwfkxfed . P_526 ; } else if ( ewjdtgxpyu < _rtP -> caerwfkxfed . P_527 )
+{ hie5vwg0j5_idx_1 = _rtP -> caerwfkxfed . P_527 ; } else { hie5vwg0j5_idx_1
+= ewjdtgxpyu ; } kga4k1wepx = 0.000823 * hie5vwg0j5_idx_1 + 0.177 ; if (
+ssIsSampleHit ( S , 1 , 0 ) ) { ht1jy4ffdq = _rtP -> caerwfkxfed . P_528 ;
+_rtB -> caerwfkxfed [ 0 ] . g0sns3hmvl = _rtP -> caerwfkxfed . P_529 * _rtP
+-> caerwfkxfed . P_528 * _rtP -> caerwfkxfed . P_530 ; } if ( kga4k1wepx <
+0.0 ) { kga4k1wepx = - muDoubleScalarPower ( - kga4k1wepx , 0.4 ) ; } else {
+kga4k1wepx = muDoubleScalarPower ( kga4k1wepx , 0.4 ) ; } kga4k1wepx = 1.0 /
+kga4k1wepx * _rtB -> caerwfkxfed [ 0 ] . g0sns3hmvl ; fph4c4pnan =
+plook_bincpa ( ewjdtgxpyu , _rtP -> caerwfkxfed . P_531 , 11U , & dl53eqxcnz
+, & _rtDW -> caerwfkxfed [ 0 ] . kjzk51hic4 ) ; if ( ssIsSampleHit ( S , 1 ,
+0 ) ) { ht1jy4ffdq = _rtP -> caerwfkxfed . P_532 ; _rtB -> caerwfkxfed [ 0 ]
+. jkohh1zuer = plook_bincpa ( _rtP -> caerwfkxfed . P_532 , _rtP ->
+caerwfkxfed . P_533 , 6U , & _rtB -> caerwfkxfed [ 0 ] . j5jx4pg31r , & _rtDW
+-> caerwfkxfed [ 0 ] . jrx3i4do02 ) ; } hie5vwg0j5_idx_1 = dl53eqxcnz ; frac
+[ 0 ] = hie5vwg0j5_idx_1 ; hie5vwg0j5_idx_1 = _rtB -> caerwfkxfed [ 0 ] .
+j5jx4pg31r ; frac [ 1 ] = hie5vwg0j5_idx_1 ; bpIndex [ 0 ] = fph4c4pnan ;
+bpIndex [ 1 ] = _rtB -> caerwfkxfed [ 0 ] . jkohh1zuer ; pl4jpj0hcq =
+intrp2d_la_pw ( bpIndex , frac , _rtP -> caerwfkxfed . P_534 , 12U , _rtP ->
+caerwfkxfed . P_581 ) ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB ->
+caerwfkxfed [ 0 ] . ao1vzba503 [ 0 ] = _rtP -> caerwfkxfed . P_538 [ 0 ] *
+_rtDW -> caerwfkxfed [ 0 ] . oxlqqwwlxq [ 0 ] ; _rtB -> caerwfkxfed [ 0 ] .
+ao1vzba503 [ 1 ] = _rtP -> caerwfkxfed . P_538 [ 1 ] * _rtDW -> caerwfkxfed [
+0 ] . oxlqqwwlxq [ 1 ] ; _rtB -> caerwfkxfed [ 0 ] . ao1vzba503 [ 2 ] = _rtP
+-> caerwfkxfed . P_538 [ 2 ] * _rtDW -> caerwfkxfed [ 0 ] . oxlqqwwlxq [ 2 ]
+; _rtB -> caerwfkxfed [ 0 ] . ep4ljuqt1u = _rtP -> caerwfkxfed . P_539 ; if (
+ssIsMajorTimeStep ( S ) ) { if ( _rtB -> caerwfkxfed [ 0 ] . ep4ljuqt1u > 0.0
+) { if ( ! _rtDW -> caerwfkxfed [ 0 ] . bbt2ziimvg ) { _rtDW -> caerwfkxfed [
+0 ] . bgonkmaxgg [ 0 ] = _rtP -> caerwfkxfed . P_26 ; _rtDW -> caerwfkxfed [
+0 ] . bgonkmaxgg [ 1 ] = _rtP -> caerwfkxfed . P_26 ; _rtDW -> caerwfkxfed [
+0 ] . bbt2ziimvg = true ; } } else { if ( _rtDW -> caerwfkxfed [ 0 ] .
+bbt2ziimvg ) { _rtB -> caerwfkxfed [ 0 ] . h5ibc1nv05 [ 0 ] = _rtP ->
+caerwfkxfed . P_22 ; _rtB -> caerwfkxfed [ 0 ] . h5ibc1nv05 [ 1 ] = _rtP ->
+caerwfkxfed . P_22 ; _rtDW -> caerwfkxfed [ 0 ] . bbt2ziimvg = false ; } } }
+} if ( _rtDW -> caerwfkxfed [ 0 ] . bbt2ziimvg ) { m3rmhklpup_idx_0 =
+fs1e1q0jmn / fy45xp05wx ; m3rmhklpup_idx_1 = fs1e1q0jmn / _rtB -> caerwfkxfed
+[ 0 ] . lb5y2bsy2z ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed
+[ 0 ] . ecwssazfhs = _rtP -> caerwfkxfed . P_24 ; _rtB -> caerwfkxfed [ 0 ] .
+mcj52p5pju [ 0 ] = _rtDW -> caerwfkxfed [ 0 ] . bgonkmaxgg [ 0 ] ; _rtB ->
+caerwfkxfed [ 0 ] . mcj52p5pju [ 1 ] = _rtDW -> caerwfkxfed [ 0 ] .
+bgonkmaxgg [ 1 ] ; } _rtB -> caerwfkxfed [ 0 ] . h5ibc1nv05 [ 0 ] = ( _rtB ->
+caerwfkxfed [ 0 ] . ecwssazfhs - _rtP -> caerwfkxfed . P_25 *
+m3rmhklpup_idx_0 ) * _rtB -> caerwfkxfed [ 0 ] . mcj52p5pju [ 0 ] +
+muDoubleScalarSqrt ( _rtP -> caerwfkxfed . P_23 * m3rmhklpup_idx_0 ) * _rtB
+-> caerwfkxfed [ 0 ] . ao1vzba503 [ 0 ] * kga4k1wepx ; _rtB -> caerwfkxfed [
+0 ] . h5ibc1nv05 [ 1 ] = ( _rtB -> caerwfkxfed [ 0 ] . ecwssazfhs - _rtP ->
+caerwfkxfed . P_25 * m3rmhklpup_idx_1 ) * _rtB -> caerwfkxfed [ 0 ] .
+mcj52p5pju [ 1 ] + muDoubleScalarSqrt ( _rtP -> caerwfkxfed . P_23 *
+m3rmhklpup_idx_1 ) * _rtB -> caerwfkxfed [ 0 ] . ao1vzba503 [ 0 ] *
+pl4jpj0hcq ; if ( ssIsMajorTimeStep ( S ) ) { srUpdateBC ( _rtDW ->
+caerwfkxfed [ 0 ] . lhw25prq2n ) ; } } m3rmhklpup_idx_0 = _rtP -> caerwfkxfed
+. P_540 * fy45xp05wx ; m3rmhklpup_idx_1 = _rtP -> caerwfkxfed . P_540 * _rtB
+-> caerwfkxfed [ 0 ] . lb5y2bsy2z ; if ( ssIsSampleHit ( S , 1 , 0 ) &&
+ssIsMajorTimeStep ( S ) ) { if ( _rtB -> caerwfkxfed [ 0 ] . ep4ljuqt1u > 0.0
+) { if ( ! _rtDW -> caerwfkxfed [ 0 ] . cmieftitsl ) { _rtDW -> caerwfkxfed [
+0 ] . loeehoagwe [ 0 ] = _rtP -> caerwfkxfed . P_21 ; _rtDW -> caerwfkxfed [
+0 ] . loeehoagwe [ 1 ] = _rtP -> caerwfkxfed . P_21 ; _rtDW -> caerwfkxfed [
+0 ] . cmieftitsl = true ; } } else { if ( _rtDW -> caerwfkxfed [ 0 ] .
+cmieftitsl ) { _rtB -> caerwfkxfed [ 0 ] . jowycjebg2 [ 0 ] = _rtP ->
+caerwfkxfed . P_17 ; _rtB -> caerwfkxfed [ 0 ] . jowycjebg2 [ 1 ] = _rtP ->
+caerwfkxfed . P_17 ; _rtDW -> caerwfkxfed [ 0 ] . cmieftitsl = false ; } } }
+if ( _rtDW -> caerwfkxfed [ 0 ] . cmieftitsl ) { m3rmhklpup_idx_0 =
+fs1e1q0jmn / m3rmhklpup_idx_0 ; hie5vwg0j5_idx_1 = fs1e1q0jmn /
+m3rmhklpup_idx_1 ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed [
+0 ] . f5wwroljmp = _rtP -> caerwfkxfed . P_19 ; _rtB -> caerwfkxfed [ 0 ] .
+amjgll5c2n [ 0 ] = _rtDW -> caerwfkxfed [ 0 ] . loeehoagwe [ 0 ] ; _rtB ->
+caerwfkxfed [ 0 ] . amjgll5c2n [ 1 ] = _rtDW -> caerwfkxfed [ 0 ] .
+loeehoagwe [ 1 ] ; } _rtB -> caerwfkxfed [ 0 ] . jowycjebg2 [ 0 ] = ( _rtB ->
+caerwfkxfed [ 0 ] . f5wwroljmp - _rtP -> caerwfkxfed . P_20 *
+m3rmhklpup_idx_0 ) * _rtB -> caerwfkxfed [ 0 ] . amjgll5c2n [ 0 ] +
+muDoubleScalarSqrt ( _rtP -> caerwfkxfed . P_18 * m3rmhklpup_idx_0 ) * _rtB
+-> caerwfkxfed [ 0 ] . ao1vzba503 [ 1 ] * kga4k1wepx ; _rtB -> caerwfkxfed [
+0 ] . jowycjebg2 [ 1 ] = ( _rtB -> caerwfkxfed [ 0 ] . f5wwroljmp - _rtP ->
+caerwfkxfed . P_20 * hie5vwg0j5_idx_1 ) * _rtB -> caerwfkxfed [ 0 ] .
+amjgll5c2n [ 1 ] + muDoubleScalarSqrt ( _rtP -> caerwfkxfed . P_18 *
+hie5vwg0j5_idx_1 ) * _rtB -> caerwfkxfed [ 0 ] . ao1vzba503 [ 1 ] *
+pl4jpj0hcq ; if ( ssIsMajorTimeStep ( S ) ) { srUpdateBC ( _rtDW ->
+caerwfkxfed [ 0 ] . par0q1t1dw ) ; } } i2wxug2o5z_idx_2 = _rtP -> caerwfkxfed
+. P_541 * bfhkqs4n5c ; dfjrsfkrzj_idx_0 = _rtP -> caerwfkxfed . P_541 * _rtB
+-> caerwfkxfed [ 0 ] . lb5y2bsy2z ; if ( ssIsSampleHit ( S , 1 , 0 ) &&
+ssIsMajorTimeStep ( S ) ) { if ( _rtB -> caerwfkxfed [ 0 ] . ep4ljuqt1u > 0.0
+) { if ( ! _rtDW -> caerwfkxfed [ 0 ] . hty3xldkx0 ) { _rtDW -> caerwfkxfed [
+0 ] . eczfn4i2re [ 0 ] = _rtP -> caerwfkxfed . P_16 ; _rtDW -> caerwfkxfed [
+0 ] . eczfn4i2re [ 1 ] = _rtP -> caerwfkxfed . P_16 ; _rtDW -> caerwfkxfed [
+0 ] . hty3xldkx0 = true ; } } else { if ( _rtDW -> caerwfkxfed [ 0 ] .
+hty3xldkx0 ) { _rtB -> caerwfkxfed [ 0 ] . lc1o51rpx2 [ 0 ] = _rtP ->
+caerwfkxfed . P_12 ; _rtB -> caerwfkxfed [ 0 ] . lc1o51rpx2 [ 1 ] = _rtP ->
+caerwfkxfed . P_12 ; _rtDW -> caerwfkxfed [ 0 ] . hty3xldkx0 = false ; } } }
+if ( _rtDW -> caerwfkxfed [ 0 ] . hty3xldkx0 ) { m3rmhklpup_idx_0 =
+fs1e1q0jmn / i2wxug2o5z_idx_2 ; m3rmhklpup_idx_1 = fs1e1q0jmn /
+dfjrsfkrzj_idx_0 ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed [
+0 ] . ipg03gmron = _rtP -> caerwfkxfed . P_14 ; _rtB -> caerwfkxfed [ 0 ] .
+nw5fwgd1pc [ 0 ] = _rtDW -> caerwfkxfed [ 0 ] . eczfn4i2re [ 0 ] ; _rtB ->
+caerwfkxfed [ 0 ] . nw5fwgd1pc [ 1 ] = _rtDW -> caerwfkxfed [ 0 ] .
+eczfn4i2re [ 1 ] ; } _rtB -> caerwfkxfed [ 0 ] . lc1o51rpx2 [ 0 ] = ( _rtB ->
+caerwfkxfed [ 0 ] . ipg03gmron - _rtP -> caerwfkxfed . P_15 *
+m3rmhklpup_idx_0 ) * _rtB -> caerwfkxfed [ 0 ] . nw5fwgd1pc [ 0 ] +
+muDoubleScalarSqrt ( _rtP -> caerwfkxfed . P_13 * m3rmhklpup_idx_0 ) * _rtB
+-> caerwfkxfed [ 0 ] . ao1vzba503 [ 2 ] * _rtB -> caerwfkxfed [ 0 ] .
+g0sns3hmvl ; _rtB -> caerwfkxfed [ 0 ] . lc1o51rpx2 [ 1 ] = ( _rtB ->
+caerwfkxfed [ 0 ] . ipg03gmron - _rtP -> caerwfkxfed . P_15 *
+m3rmhklpup_idx_1 ) * _rtB -> caerwfkxfed [ 0 ] . nw5fwgd1pc [ 1 ] +
+muDoubleScalarSqrt ( _rtP -> caerwfkxfed . P_13 * m3rmhklpup_idx_1 ) * _rtB
+-> caerwfkxfed [ 0 ] . ao1vzba503 [ 2 ] * pl4jpj0hcq ; if ( ssIsMajorTimeStep
+( S ) ) { srUpdateBC ( _rtDW -> caerwfkxfed [ 0 ] . efeekygzjb ) ; } } if (
+ssIsSampleHit ( S , 1 , 0 ) ) { ht1jy4ffdq = _rtP -> caerwfkxfed . P_542 ;
+_rtB -> caerwfkxfed [ 0 ] . e11pd3pzh2 = _rtP -> caerwfkxfed . P_543 * _rtP
+-> caerwfkxfed . P_542 ; } if ( ssIsMajorTimeStep ( S ) ) { if ( ewjdtgxpyu
+<= 1000.0 ) { rtAction = 0 ; } else if ( ewjdtgxpyu >= 2000.0 ) { rtAction =
+1 ; } else { rtAction = 2 ; } _rtDW -> caerwfkxfed [ 0 ] . a5jzici00a =
+rtAction ; } else { rtAction = _rtDW -> caerwfkxfed [ 0 ] . a5jzici00a ; }
+switch ( rtAction ) { case 0 : muDoubleScalarSinCos ( _rtB -> caerwfkxfed [ 0
+] . e11pd3pzh2 , & hie5vwg0j5_idx_1 , & kga4k1wepx ) ; j4aqh4ovvp = _rtB ->
+caerwfkxfed [ 0 ] . h5ibc1nv05 [ 0 ] * kga4k1wepx - hie5vwg0j5_idx_1 * _rtB
+-> caerwfkxfed [ 0 ] . jowycjebg2 [ 0 ] ; hie5vwg0j5_idx_1 = _rtB ->
+caerwfkxfed [ 0 ] . jowycjebg2 [ 0 ] * kga4k1wepx + hie5vwg0j5_idx_1 * _rtB
+-> caerwfkxfed [ 0 ] . h5ibc1nv05 [ 0 ] ; for ( i = 0 ; i < 3 ; i ++ ) {
+mnz5fs4iuo [ i ] = gdgwwi2lmx [ i + 6 ] * _rtB -> caerwfkxfed [ 0 ] .
+lc1o51rpx2 [ 0 ] + ( gdgwwi2lmx [ i + 3 ] * hie5vwg0j5_idx_1 + gdgwwi2lmx [ i
+] * j4aqh4ovvp ) ; } if ( ssIsMajorTimeStep ( S ) ) { srUpdateBC ( _rtDW ->
+caerwfkxfed [ 0 ] . bm3giqpwcx ) ; } break ; case 1 : mnz5fs4iuo [ 0 ] = _rtP
+-> caerwfkxfed . P_2 * _rtB -> caerwfkxfed [ 0 ] . h5ibc1nv05 [ 1 ] ;
+mnz5fs4iuo [ 1 ] = _rtP -> caerwfkxfed . P_2 * _rtB -> caerwfkxfed [ 0 ] .
+jowycjebg2 [ 1 ] ; mnz5fs4iuo [ 2 ] = _rtP -> caerwfkxfed . P_2 * _rtB ->
+caerwfkxfed [ 0 ] . lc1o51rpx2 [ 1 ] ; if ( ssIsMajorTimeStep ( S ) ) {
+srUpdateBC ( _rtDW -> caerwfkxfed [ 0 ] . pdazpvqxoc ) ; } break ; case 2 :
+muDoubleScalarSinCos ( _rtB -> caerwfkxfed [ 0 ] . e11pd3pzh2 , & kga4k1wepx
+, & fy45xp05wx ) ; hie5vwg0j5_idx_1 = _rtB -> caerwfkxfed [ 0 ] . h5ibc1nv05
+[ 0 ] * fy45xp05wx - kga4k1wepx * _rtB -> caerwfkxfed [ 0 ] . jowycjebg2 [ 0
+] ; j4aqh4ovvp = _rtB -> caerwfkxfed [ 0 ] . jowycjebg2 [ 0 ] * fy45xp05wx +
+kga4k1wepx * _rtB -> caerwfkxfed [ 0 ] . h5ibc1nv05 [ 0 ] ; for ( i = 0 ; i <
+3 ; i ++ ) { dw55yfpcss [ i ] = gdgwwi2lmx [ i + 6 ] * _rtB -> caerwfkxfed [
+0 ] . lc1o51rpx2 [ 0 ] + ( gdgwwi2lmx [ i + 3 ] * j4aqh4ovvp + gdgwwi2lmx [ i
+] * hie5vwg0j5_idx_1 ) ; } if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB ->
+caerwfkxfed [ 0 ] . m1v1gzrvau = _rtP -> caerwfkxfed . P_4 ; } kga4k1wepx =
+ewjdtgxpyu - _rtB -> caerwfkxfed [ 0 ] . m1v1gzrvau ; if ( ssIsSampleHit ( S
+, 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ] . hkmffguw4p = _rtP -> caerwfkxfed .
+P_5 ; } fy45xp05wx = _rtB -> caerwfkxfed [ 0 ] . hkmffguw4p - _rtB ->
+caerwfkxfed [ 0 ] . m1v1gzrvau ; mnz5fs4iuo [ 0 ] = ( _rtB -> caerwfkxfed [ 0
+] . h5ibc1nv05 [ 1 ] - dw55yfpcss [ 0 ] ) * kga4k1wepx / fy45xp05wx +
+dw55yfpcss [ 0 ] ; mnz5fs4iuo [ 1 ] = ( _rtB -> caerwfkxfed [ 0 ] .
+jowycjebg2 [ 1 ] - dw55yfpcss [ 1 ] ) * kga4k1wepx / fy45xp05wx + dw55yfpcss
+[ 1 ] ; mnz5fs4iuo [ 2 ] = ( _rtB -> caerwfkxfed [ 0 ] . lc1o51rpx2 [ 1 ] -
+dw55yfpcss [ 2 ] ) * kga4k1wepx / fy45xp05wx + dw55yfpcss [ 2 ] ; if (
+ssIsMajorTimeStep ( S ) ) { srUpdateBC ( _rtDW -> caerwfkxfed [ 0 ] .
+mnfjb0ucn2 ) ; } break ; } _rtB -> caerwfkxfed [ 0 ] . g10hpkgud2 [ 0 ] =
+_rtP -> caerwfkxfed . P_544 * mnz5fs4iuo [ 0 ] * _rtP -> caerwfkxfed . P_545
++ bhgkwh20ck [ 0 ] ; _rtB -> caerwfkxfed [ 0 ] . g10hpkgud2 [ 1 ] = _rtP ->
+caerwfkxfed . P_544 * mnz5fs4iuo [ 1 ] * _rtP -> caerwfkxfed . P_545 +
+bhgkwh20ck [ 1 ] ; _rtB -> caerwfkxfed [ 0 ] . g10hpkgud2 [ 2 ] = _rtP ->
+caerwfkxfed . P_544 * mnz5fs4iuo [ 2 ] * _rtP -> caerwfkxfed . P_545 +
+bhgkwh20ck [ 2 ] ; _rtB -> caerwfkxfed [ 0 ] . ckhmhsu3dr = _rtP ->
+caerwfkxfed . P_546 * eog11ippyj ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB
+-> caerwfkxfed [ 0 ] . ikinrwz4u3 = _rtP -> caerwfkxfed . P_547 ; _rtB ->
+caerwfkxfed [ 0 ] . imha1owpfb = _rtP -> caerwfkxfed . P_548 ; _rtB ->
+caerwfkxfed [ 0 ] . fd11vnb0iu = _rtP -> caerwfkxfed . P_549 ; _rtB ->
+caerwfkxfed [ 0 ] . cxi4wl5urq = _rtP -> caerwfkxfed . P_553 * _rtDW ->
+caerwfkxfed [ 0 ] . idpd1gggpl ; ht1jy4ffdq = _rtP -> caerwfkxfed . P_554 ;
+_rtB -> caerwfkxfed [ 0 ] . ba5s43rtmz = _rtP -> caerwfkxfed . P_555 * _rtP
+-> caerwfkxfed . P_554 ; if ( ssIsMajorTimeStep ( S ) ) { if ( _rtB ->
+caerwfkxfed [ 0 ] . ikinrwz4u3 > 0.0 ) { if ( ! _rtDW -> caerwfkxfed [ 0 ] .
+fh1n4qqnhr ) { _rtDW -> caerwfkxfed [ 0 ] . kyo3cp5usa [ 0 ] = _rtP ->
+caerwfkxfed . P_46 ; _rtDW -> caerwfkxfed [ 0 ] . kyo3cp5usa [ 1 ] = _rtP ->
+caerwfkxfed . P_46 ; _rtDW -> caerwfkxfed [ 0 ] . fh1n4qqnhr = true ; } }
+else { if ( _rtDW -> caerwfkxfed [ 0 ] . fh1n4qqnhr ) { _rtB -> caerwfkxfed [
+0 ] . g3gadhyjyx [ 0 ] = _rtP -> caerwfkxfed . P_39 ; _rtB -> caerwfkxfed [ 0
+] . g3gadhyjyx [ 1 ] = _rtP -> caerwfkxfed . P_39 ; _rtDW -> caerwfkxfed [ 0
+] . fh1n4qqnhr = false ; } } } } if ( _rtDW -> caerwfkxfed [ 0 ] . fh1n4qqnhr
+) { if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ] .
+p3x21dfs2h = _rtP -> caerwfkxfed . P_40 ; } i2wxug2o5z_idx_2 *= _rtB ->
+caerwfkxfed [ 0 ] . ba5s43rtmz ; hie5vwg0j5_idx_1 = dfjrsfkrzj_idx_0 * _rtB
+-> caerwfkxfed [ 0 ] . ba5s43rtmz ; m3rmhklpup_idx_0 = _rtB -> caerwfkxfed [
+0 ] . p3x21dfs2h / muDoubleScalarSqrt ( i2wxug2o5z_idx_2 ) ; m3rmhklpup_idx_1
+= _rtB -> caerwfkxfed [ 0 ] . p3x21dfs2h / muDoubleScalarSqrt (
+hie5vwg0j5_idx_1 ) ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed
+[ 0 ] . esjqctmunt = _rtP -> caerwfkxfed . P_42 ; _rtB -> caerwfkxfed [ 0 ] .
+opllwgbfzt = _rtP -> caerwfkxfed . P_43 ; _rtB -> caerwfkxfed [ 0 ] .
+dflvobdfwo = _rtP -> caerwfkxfed . P_44 ; } i2wxug2o5z_idx_2 *= _rtB ->
+caerwfkxfed [ 0 ] . ba5s43rtmz ; hie5vwg0j5_idx_1 *= _rtB -> caerwfkxfed [ 0
+] . ba5s43rtmz ; if ( ( i2wxug2o5z_idx_2 < 0.0 ) && ( _rtB -> caerwfkxfed [ 0
+] . dflvobdfwo > muDoubleScalarFloor ( _rtB -> caerwfkxfed [ 0 ] . dflvobdfwo
+) ) ) { i2wxug2o5z_idx_2 = - muDoubleScalarPower ( - i2wxug2o5z_idx_2 , _rtB
+-> caerwfkxfed [ 0 ] . dflvobdfwo ) ; } else { i2wxug2o5z_idx_2 =
+muDoubleScalarPower ( i2wxug2o5z_idx_2 , _rtB -> caerwfkxfed [ 0 ] .
+dflvobdfwo ) ; } i2wxug2o5z_idx_2 = _rtB -> caerwfkxfed [ 0 ] . opllwgbfzt /
+i2wxug2o5z_idx_2 * _rtB -> caerwfkxfed [ 0 ] . g0sns3hmvl ; if (
+ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ] . frllw3a51c [ 0 ]
+= _rtDW -> caerwfkxfed [ 0 ] . kyo3cp5usa [ 0 ] ; _rtB -> caerwfkxfed [ 0 ] .
+frllw3a51c [ 1 ] = _rtDW -> caerwfkxfed [ 0 ] . kyo3cp5usa [ 1 ] ; } _rtB ->
+caerwfkxfed [ 0 ] . g3gadhyjyx [ 0 ] = ( _rtB -> caerwfkxfed [ 0 ] .
+esjqctmunt - _rtP -> caerwfkxfed . P_45 * m3rmhklpup_idx_0 ) * _rtB ->
+caerwfkxfed [ 0 ] . frllw3a51c [ 0 ] + muDoubleScalarSqrt ( _rtP ->
+caerwfkxfed . P_41 * m3rmhklpup_idx_0 ) * i2wxug2o5z_idx_2 * _rtB ->
+caerwfkxfed [ 0 ] . cxi4wl5urq ; if ( ( hie5vwg0j5_idx_1 < 0.0 ) && ( _rtB ->
+caerwfkxfed [ 0 ] . dflvobdfwo > muDoubleScalarFloor ( _rtB -> caerwfkxfed [
+0 ] . dflvobdfwo ) ) ) { hie5vwg0j5_idx_1 = - muDoubleScalarPower ( -
+hie5vwg0j5_idx_1 , _rtB -> caerwfkxfed [ 0 ] . dflvobdfwo ) ; } else {
+hie5vwg0j5_idx_1 = muDoubleScalarPower ( hie5vwg0j5_idx_1 , _rtB ->
+caerwfkxfed [ 0 ] . dflvobdfwo ) ; } _rtB -> caerwfkxfed [ 0 ] . g3gadhyjyx [
+1 ] = _rtB -> caerwfkxfed [ 0 ] . opllwgbfzt / hie5vwg0j5_idx_1 * pl4jpj0hcq
+* muDoubleScalarSqrt ( _rtP -> caerwfkxfed . P_41 * m3rmhklpup_idx_1 ) * _rtB
+-> caerwfkxfed [ 0 ] . cxi4wl5urq + ( _rtB -> caerwfkxfed [ 0 ] . esjqctmunt
+- _rtP -> caerwfkxfed . P_45 * m3rmhklpup_idx_1 ) * _rtB -> caerwfkxfed [ 0 ]
+. frllw3a51c [ 1 ] ; if ( ssIsMajorTimeStep ( S ) ) { srUpdateBC ( _rtDW ->
+caerwfkxfed [ 0 ] . csisu0rlja ) ; } } if ( ssIsSampleHit ( S , 1 , 0 ) &&
+ssIsMajorTimeStep ( S ) ) { if ( _rtB -> caerwfkxfed [ 0 ] . imha1owpfb > 0.0
+) { if ( ! _rtDW -> caerwfkxfed [ 0 ] . bhpes5cxsx ) { _rtDW -> caerwfkxfed [
+0 ] . i3mmplfdom [ 0 ] = _rtP -> caerwfkxfed . P_37 ; _rtDW -> caerwfkxfed [
+0 ] . i3mmplfdom [ 1 ] = _rtP -> caerwfkxfed . P_37 ; _rtDW -> caerwfkxfed [
+0 ] . mwvb4h5q5n [ 0 ] = _rtP -> caerwfkxfed . P_38 ; _rtDW -> caerwfkxfed [
+0 ] . mwvb4h5q5n [ 1 ] = _rtP -> caerwfkxfed . P_38 ; _rtDW -> caerwfkxfed [
+0 ] . bhpes5cxsx = true ; } } else { if ( _rtDW -> caerwfkxfed [ 0 ] .
+bhpes5cxsx ) { _rtB -> caerwfkxfed [ 0 ] . h2by3upa5l [ 0 ] = _rtP ->
+caerwfkxfed . P_33 ; _rtB -> caerwfkxfed [ 0 ] . h2by3upa5l [ 1 ] = _rtP ->
+caerwfkxfed . P_33 ; _rtDW -> caerwfkxfed [ 0 ] . bhpes5cxsx = false ; } } }
+if ( _rtDW -> caerwfkxfed [ 0 ] . bhpes5cxsx ) { if ( ssIsSampleHit ( S , 1 ,
+0 ) ) { _rtB -> caerwfkxfed [ 0 ] . g3f0dchuqj = _rtP -> caerwfkxfed . P_34 ;
+_rtB -> caerwfkxfed [ 0 ] . mwiwsf1apc = _rtP -> caerwfkxfed . P_35 * _rtB ->
+caerwfkxfed [ 0 ] . ba5s43rtmz ; } fy45xp05wx = _rtB -> caerwfkxfed [ 0 ] .
+g3f0dchuqj - fs1e1q0jmn / _rtB -> caerwfkxfed [ 0 ] . mwiwsf1apc * _rtP ->
+caerwfkxfed . P_36 ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed
+[ 0 ] . frmpdgcfv0 [ 0 ] = _rtDW -> caerwfkxfed [ 0 ] . i3mmplfdom [ 0 ] ;
+_rtB -> caerwfkxfed [ 0 ] . frmpdgcfv0 [ 1 ] = _rtDW -> caerwfkxfed [ 0 ] .
+i3mmplfdom [ 1 ] ; _rtB -> caerwfkxfed [ 0 ] . mqhqr3n5i1 [ 0 ] = _rtDW ->
+caerwfkxfed [ 0 ] . mwvb4h5q5n [ 0 ] ; _rtB -> caerwfkxfed [ 0 ] . mqhqr3n5i1
+[ 1 ] = _rtDW -> caerwfkxfed [ 0 ] . mwvb4h5q5n [ 1 ] ; } _rtB -> caerwfkxfed
+[ 0 ] . h2by3upa5l [ 0 ] = ( _rtB -> caerwfkxfed [ 0 ] . lc1o51rpx2 [ 0 ] -
+_rtB -> caerwfkxfed [ 0 ] . mqhqr3n5i1 [ 0 ] ) / _rtB -> caerwfkxfed [ 0 ] .
+mwiwsf1apc + fy45xp05wx * _rtB -> caerwfkxfed [ 0 ] . frmpdgcfv0 [ 0 ] ; _rtB
+-> caerwfkxfed [ 0 ] . h2by3upa5l [ 1 ] = ( _rtB -> caerwfkxfed [ 0 ] .
+lc1o51rpx2 [ 1 ] - _rtB -> caerwfkxfed [ 0 ] . mqhqr3n5i1 [ 1 ] ) / _rtB ->
+caerwfkxfed [ 0 ] . mwiwsf1apc + fy45xp05wx * _rtB -> caerwfkxfed [ 0 ] .
+frmpdgcfv0 [ 1 ] ; if ( ssIsMajorTimeStep ( S ) ) { srUpdateBC ( _rtDW ->
+caerwfkxfed [ 0 ] . agc3pnp1ib ) ; } } if ( ssIsSampleHit ( S , 1 , 0 ) &&
+ssIsMajorTimeStep ( S ) ) { if ( _rtB -> caerwfkxfed [ 0 ] . fd11vnb0iu > 0.0
+) { if ( ! _rtDW -> caerwfkxfed [ 0 ] . mpzqla0as5 ) { _rtDW -> caerwfkxfed [
+0 ] . cz0yulgjkl [ 0 ] = _rtP -> caerwfkxfed . P_31 ; _rtDW -> caerwfkxfed [
+0 ] . cz0yulgjkl [ 1 ] = _rtP -> caerwfkxfed . P_31 ; _rtDW -> caerwfkxfed [
+0 ] . gkupuf105z [ 0 ] = _rtP -> caerwfkxfed . P_32 ; _rtDW -> caerwfkxfed [
+0 ] . gkupuf105z [ 1 ] = _rtP -> caerwfkxfed . P_32 ; _rtDW -> caerwfkxfed [
+0 ] . mpzqla0as5 = true ; } } else { if ( _rtDW -> caerwfkxfed [ 0 ] .
+mpzqla0as5 ) { _rtB -> caerwfkxfed [ 0 ] . pd4szq5but [ 0 ] = _rtP ->
+caerwfkxfed . P_27 ; _rtB -> caerwfkxfed [ 0 ] . pd4szq5but [ 1 ] = _rtP ->
+caerwfkxfed . P_27 ; _rtDW -> caerwfkxfed [ 0 ] . mpzqla0as5 = false ; } } }
+if ( _rtDW -> caerwfkxfed [ 0 ] . mpzqla0as5 ) { if ( ssIsSampleHit ( S , 1 ,
+0 ) ) { _rtB -> caerwfkxfed [ 0 ] . ljqoc4w0hs = _rtP -> caerwfkxfed . P_28 ;
+_rtB -> caerwfkxfed [ 0 ] . flb02nduap = _rtP -> caerwfkxfed . P_29 * _rtB ->
+caerwfkxfed [ 0 ] . ba5s43rtmz ; } fy45xp05wx = _rtB -> caerwfkxfed [ 0 ] .
+ljqoc4w0hs - fs1e1q0jmn / _rtB -> caerwfkxfed [ 0 ] . flb02nduap * _rtP ->
+caerwfkxfed . P_30 ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB -> caerwfkxfed
+[ 0 ] . hgtnawpzgo [ 0 ] = _rtDW -> caerwfkxfed [ 0 ] . cz0yulgjkl [ 0 ] ;
+_rtB -> caerwfkxfed [ 0 ] . hgtnawpzgo [ 1 ] = _rtDW -> caerwfkxfed [ 0 ] .
+cz0yulgjkl [ 1 ] ; _rtB -> caerwfkxfed [ 0 ] . hvfdxrbjkf [ 0 ] = _rtDW ->
+caerwfkxfed [ 0 ] . gkupuf105z [ 0 ] ; _rtB -> caerwfkxfed [ 0 ] . hvfdxrbjkf
+[ 1 ] = _rtDW -> caerwfkxfed [ 0 ] . gkupuf105z [ 1 ] ; } _rtB -> caerwfkxfed
+[ 0 ] . pd4szq5but [ 0 ] = ( _rtB -> caerwfkxfed [ 0 ] . jowycjebg2 [ 0 ] -
+_rtB -> caerwfkxfed [ 0 ] . hvfdxrbjkf [ 0 ] ) / _rtB -> caerwfkxfed [ 0 ] .
+flb02nduap + fy45xp05wx * _rtB -> caerwfkxfed [ 0 ] . hgtnawpzgo [ 0 ] ; _rtB
+-> caerwfkxfed [ 0 ] . pd4szq5but [ 1 ] = ( _rtB -> caerwfkxfed [ 0 ] .
+jowycjebg2 [ 1 ] - _rtB -> caerwfkxfed [ 0 ] . hvfdxrbjkf [ 1 ] ) / _rtB ->
+caerwfkxfed [ 0 ] . flb02nduap + fy45xp05wx * _rtB -> caerwfkxfed [ 0 ] .
+hgtnawpzgo [ 1 ] ; if ( ssIsMajorTimeStep ( S ) ) { srUpdateBC ( _rtDW ->
+caerwfkxfed [ 0 ] . meggtxwxz0 ) ; } } if ( ssIsMajorTimeStep ( S ) ) { if (
+ewjdtgxpyu <= 1000.0 ) { rtAction = 0 ; } else if ( ewjdtgxpyu >= 2000.0 ) {
+rtAction = 1 ; } else { rtAction = 2 ; } _rtDW -> caerwfkxfed [ 0 ] .
+ddio1hlsuy = rtAction ; } else { rtAction = _rtDW -> caerwfkxfed [ 0 ] .
+ddio1hlsuy ; } switch ( rtAction ) { case 0 : muDoubleScalarSinCos ( _rtB ->
+caerwfkxfed [ 0 ] . e11pd3pzh2 , & fy45xp05wx , & kga4k1wepx ) ; j4aqh4ovvp =
+_rtB -> caerwfkxfed [ 0 ] . g3gadhyjyx [ 0 ] * kga4k1wepx - fy45xp05wx * _rtB
+-> caerwfkxfed [ 0 ] . h2by3upa5l [ 0 ] ; hie5vwg0j5_idx_1 = _rtB ->
+caerwfkxfed [ 0 ] . h2by3upa5l [ 0 ] * kga4k1wepx + fy45xp05wx * _rtB ->
+caerwfkxfed [ 0 ] . g3gadhyjyx [ 0 ] ; for ( i = 0 ; i < 3 ; i ++ ) {
+pjk02b11oj [ i ] = gdgwwi2lmx [ i + 6 ] * _rtB -> caerwfkxfed [ 0 ] .
+pd4szq5but [ 0 ] + ( gdgwwi2lmx [ i + 3 ] * hie5vwg0j5_idx_1 + gdgwwi2lmx [ i
+] * j4aqh4ovvp ) ; } if ( ssIsMajorTimeStep ( S ) ) { srUpdateBC ( _rtDW ->
+caerwfkxfed [ 0 ] . iga4kh2ofg ) ; } break ; case 1 : pjk02b11oj [ 0 ] = _rtP
+-> caerwfkxfed . P_8 * _rtB -> caerwfkxfed [ 0 ] . g3gadhyjyx [ 1 ] ;
+pjk02b11oj [ 1 ] = _rtP -> caerwfkxfed . P_8 * _rtB -> caerwfkxfed [ 0 ] .
+h2by3upa5l [ 1 ] ; pjk02b11oj [ 2 ] = _rtP -> caerwfkxfed . P_8 * _rtB ->
+caerwfkxfed [ 0 ] . pd4szq5but [ 1 ] ; if ( ssIsMajorTimeStep ( S ) ) {
+srUpdateBC ( _rtDW -> caerwfkxfed [ 0 ] . gx1euzzgim ) ; } break ; case 2 :
+muDoubleScalarSinCos ( _rtB -> caerwfkxfed [ 0 ] . e11pd3pzh2 , & kga4k1wepx
+, & fy45xp05wx ) ; j4aqh4ovvp = _rtB -> caerwfkxfed [ 0 ] . g3gadhyjyx [ 0 ]
+* fy45xp05wx - kga4k1wepx * _rtB -> caerwfkxfed [ 0 ] . h2by3upa5l [ 0 ] ;
+hie5vwg0j5_idx_1 = _rtB -> caerwfkxfed [ 0 ] . h2by3upa5l [ 0 ] * fy45xp05wx
++ kga4k1wepx * _rtB -> caerwfkxfed [ 0 ] . g3gadhyjyx [ 0 ] ; for ( i = 0 ; i
+< 3 ; i ++ ) { bhgkwh20ck [ i ] = gdgwwi2lmx [ i + 6 ] * _rtB -> caerwfkxfed
+[ 0 ] . pd4szq5but [ 0 ] + ( gdgwwi2lmx [ i + 3 ] * hie5vwg0j5_idx_1 +
+gdgwwi2lmx [ i ] * j4aqh4ovvp ) ; } if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtB
+-> caerwfkxfed [ 0 ] . a2uuga2dfg = _rtP -> caerwfkxfed . P_10 ; } fy45xp05wx
+= ewjdtgxpyu - _rtB -> caerwfkxfed [ 0 ] . a2uuga2dfg ; if ( ssIsSampleHit (
+S , 1 , 0 ) ) { _rtB -> caerwfkxfed [ 0 ] . mqdowgy3ii = _rtP -> caerwfkxfed
+. P_11 ; } kga4k1wepx = _rtB -> caerwfkxfed [ 0 ] . mqdowgy3ii - _rtB ->
+caerwfkxfed [ 0 ] . a2uuga2dfg ; pjk02b11oj [ 0 ] = ( _rtB -> caerwfkxfed [ 0
+] . g3gadhyjyx [ 1 ] - bhgkwh20ck [ 0 ] ) * fy45xp05wx / kga4k1wepx +
+bhgkwh20ck [ 0 ] ; pjk02b11oj [ 1 ] = ( _rtB -> caerwfkxfed [ 0 ] .
+h2by3upa5l [ 1 ] - bhgkwh20ck [ 1 ] ) * fy45xp05wx / kga4k1wepx + bhgkwh20ck
+[ 1 ] ; pjk02b11oj [ 2 ] = ( _rtB -> caerwfkxfed [ 0 ] . pd4szq5but [ 1 ] -
+bhgkwh20ck [ 2 ] ) * fy45xp05wx / kga4k1wepx + bhgkwh20ck [ 2 ] ; if (
+ssIsMajorTimeStep ( S ) ) { srUpdateBC ( _rtDW -> caerwfkxfed [ 0 ] .
+d3au0bbrng ) ; } break ; } _rtB -> caerwfkxfed [ 0 ] . g3jwsdmrfo [ 0 ] =
+_rtP -> caerwfkxfed . P_556 * pjk02b11oj [ 0 ] ; _rtB -> caerwfkxfed [ 0 ] .
+g3jwsdmrfo [ 1 ] = _rtP -> caerwfkxfed . P_556 * pjk02b11oj [ 1 ] ; _rtB ->
+caerwfkxfed [ 0 ] . g3jwsdmrfo [ 2 ] = _rtP -> caerwfkxfed . P_556 *
+pjk02b11oj [ 2 ] ; _rtB -> caerwfkxfed [ 0 ] . mcwf2waokx = _rtP ->
+caerwfkxfed . P_557 * pg4naehcgd ; for ( i = 0 ; i < 6 ; i ++ ) { _rtB ->
+kbsgd40wlv [ i + _rtDW -> fbn0fcdbpe * 6 ] = jbe23ejmq4 [ i ] ; }
+ssCallAccelCopyCacheForIIS ( S , 47 , ( void * ) 0 ) ; _rtDW -> fbn0fcdbpe ++
+; } if ( ssIsSampleHit ( S , 1 , 0 ) ) { ssCallAccelRunBlock ( S , 57 , 24 ,
+SS_CALL_MDL_OUTPUTS ) ; ssCallAccelRunBlock ( S , 57 , 25 ,
+SS_CALL_MDL_OUTPUTS ) ; ssCallAccelRunBlock ( S , 57 , 26 ,
+SS_CALL_MDL_OUTPUTS ) ; ssCallAccelRunBlock ( S , 57 , 27 ,
+SS_CALL_MDL_OUTPUTS ) ; ssCallAccelRunBlock ( S , 57 , 28 ,
+SS_CALL_MDL_OUTPUTS ) ; ssCallAccelRunBlock ( S , 57 , 29 ,
+SS_CALL_MDL_OUTPUTS ) ; } UNUSED_PARAMETER ( tid ) ; }
+#define MDL_UPDATE
+static void mdlUpdate ( SimStruct * S , int_T tid ) { int32_T idxWidth ;
+n3qi1whofz * _rtB ; loikxjbxjg * _rtP ; ew10rzwqr2 * _rtDW ; _rtDW = ( (
+ew10rzwqr2 * ) ssGetRootDWork ( S ) ) ; _rtP = ( ( loikxjbxjg * )
+ssGetDefaultParam ( S ) ) ; _rtB = ( ( n3qi1whofz * ) _ssGetBlockIO ( S ) ) ;
+if ( ssIsSampleHit ( S , 1 , 0 ) ) { } _rtDW -> bpzo543yxr = 0 ; while (
+_rtDW -> bpzo543yxr < 3 ) { ssCallAccelCopyCacheForIIS ( S , 5 , ( void * ) 1
+) ; _rtB -> kbid4ztlyb [ 0 ] = _rtB -> kity0pstnv [ _rtDW -> bpzo543yxr << 1
+] ; _rtB -> kbid4ztlyb [ 1 ] = _rtB -> kity0pstnv [ ( _rtDW -> bpzo543yxr <<
+1 ) + 1 ] ; _rtDW -> caerwfkxfe [ 0 ] . hjm4gwoouy . IcNeedsLoading = 0 ;
+ssCallAccelCopyCacheForIIS ( S , 5 , ( void * ) 0 ) ; _rtDW -> bpzo543yxr ++
+; } if ( ssIsSampleHit ( S , 1 , 0 ) ) { } _rtDW -> poe1w2tyiw = 0 ; while (
+_rtDW -> poe1w2tyiw < 2 ) { ssCallAccelCopyCacheForIIS ( S , 56 , ( void * )
+1 ) ; _rtDW -> caerwfkxfedn [ 0 ] . mgblklkgqd . IcNeedsLoading = 0 ; _rtDW
+-> caerwfkxfedn [ 0 ] . bhm5j1kbvg . IcNeedsLoading = 0 ; { real_T * *
+uBuffer = ( real_T * * ) & _rtDW -> caerwfkxfedn [ 0 ] . m3pamfoj4l .
+TUbufferPtrs [ 0 ] ; real_T * * tBuffer = ( real_T * * ) & _rtDW ->
+caerwfkxfedn [ 0 ] . m3pamfoj4l . TUbufferPtrs [ 4 ] ; real_T * * xBuffer = (
+NULL ) ; real_T simTime = ssGetT ( S ) ; real_T appliedDelay ; appliedDelay =
+_rtB -> caerwfkxfedn [ 0 ] . alncatz4jq ; if ( appliedDelay > _rtP ->
+caerwfkxfedn . P_1 ) { appliedDelay = _rtP -> caerwfkxfedn . P_1 ; } _rtDW ->
+caerwfkxfedn [ 0 ] . bsw4sh0ine . Head [ 0 ] = ( ( _rtDW -> caerwfkxfedn [ 0
+] . bsw4sh0ine . Head [ 0 ] < ( _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine .
+CircularBufSize [ 0 ] - 1 ) ) ? ( _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine .
+Head [ 0 ] + 1 ) : 0 ) ; if ( _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Head
+[ 0 ] == _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Tail [ 0 ] ) { if ( !
+MultiVehicleModel_acc_rt_TDelayUpdateTailOrGrowBuf ( & _rtDW -> caerwfkxfedn
+[ 0 ] . bsw4sh0ine . CircularBufSize [ 0 ] , & _rtDW -> caerwfkxfedn [ 0 ] .
+bsw4sh0ine . Tail [ 0 ] , & _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Head [
+0 ] , & _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Last [ 0 ] , simTime -
+_rtP -> caerwfkxfedn . P_1 , tBuffer , uBuffer , xBuffer , ( boolean_T ) 0 ,
+( boolean_T ) 0 , & _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . MaxNewBufSize
+) ) { ssSetErrorStatus ( S , "vtdelay memory allocation error" ) ; return ; }
+} ( * tBuffer ++ ) [ _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Head [ 0 ] ]
+= simTime ; ( * uBuffer ++ ) [ _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine .
+Head [ 0 ] ] = _rtB -> caerwfkxfedn [ 0 ] . fb1segx4bt [ 1 ] ; appliedDelay =
+_rtB -> caerwfkxfedn [ 0 ] . alncatz4jq ; if ( appliedDelay > _rtP ->
+caerwfkxfedn . P_1 ) { appliedDelay = _rtP -> caerwfkxfedn . P_1 ; } _rtDW ->
+caerwfkxfedn [ 0 ] . bsw4sh0ine . Head [ 1 ] = ( ( _rtDW -> caerwfkxfedn [ 0
+] . bsw4sh0ine . Head [ 1 ] < ( _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine .
+CircularBufSize [ 1 ] - 1 ) ) ? ( _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine .
+Head [ 1 ] + 1 ) : 0 ) ; if ( _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Head
+[ 1 ] == _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Tail [ 1 ] ) { if ( !
+MultiVehicleModel_acc_rt_TDelayUpdateTailOrGrowBuf ( & _rtDW -> caerwfkxfedn
+[ 0 ] . bsw4sh0ine . CircularBufSize [ 1 ] , & _rtDW -> caerwfkxfedn [ 0 ] .
+bsw4sh0ine . Tail [ 1 ] , & _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Head [
+1 ] , & _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Last [ 1 ] , simTime -
+_rtP -> caerwfkxfedn . P_1 , tBuffer , uBuffer , xBuffer , ( boolean_T ) 0 ,
+( boolean_T ) 0 , & _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . MaxNewBufSize
+) ) { ssSetErrorStatus ( S , "vtdelay memory allocation error" ) ; return ; }
+} ( * tBuffer ++ ) [ _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Head [ 1 ] ]
+= simTime ; ( * uBuffer ++ ) [ _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine .
+Head [ 1 ] ] = _rtB -> caerwfkxfedn [ 0 ] . cow31xfzct ; appliedDelay = _rtB
+-> caerwfkxfedn [ 0 ] . alncatz4jq ; if ( appliedDelay > _rtP -> caerwfkxfedn
+. P_1 ) { appliedDelay = _rtP -> caerwfkxfedn . P_1 ; } _rtDW -> caerwfkxfedn
+[ 0 ] . bsw4sh0ine . Head [ 2 ] = ( ( _rtDW -> caerwfkxfedn [ 0 ] .
+bsw4sh0ine . Head [ 2 ] < ( _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine .
+CircularBufSize [ 2 ] - 1 ) ) ? ( _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine .
+Head [ 2 ] + 1 ) : 0 ) ; if ( _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Head
+[ 2 ] == _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Tail [ 2 ] ) { if ( !
+MultiVehicleModel_acc_rt_TDelayUpdateTailOrGrowBuf ( & _rtDW -> caerwfkxfedn
+[ 0 ] . bsw4sh0ine . CircularBufSize [ 2 ] , & _rtDW -> caerwfkxfedn [ 0 ] .
+bsw4sh0ine . Tail [ 2 ] , & _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Head [
+2 ] , & _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Last [ 2 ] , simTime -
+_rtP -> caerwfkxfedn . P_1 , tBuffer , uBuffer , xBuffer , ( boolean_T ) 0 ,
+( boolean_T ) 0 , & _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . MaxNewBufSize
+) ) { ssSetErrorStatus ( S , "vtdelay memory allocation error" ) ; return ; }
+} ( * tBuffer ++ ) [ _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Head [ 2 ] ]
+= simTime ; ( * uBuffer ++ ) [ _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine .
+Head [ 2 ] ] = _rtB -> caerwfkxfedn [ 0 ] . md1ijoow2u ; appliedDelay = _rtB
+-> caerwfkxfedn [ 0 ] . alncatz4jq ; if ( appliedDelay > _rtP -> caerwfkxfedn
+. P_1 ) { appliedDelay = _rtP -> caerwfkxfedn . P_1 ; } _rtDW -> caerwfkxfedn
+[ 0 ] . bsw4sh0ine . Head [ 3 ] = ( ( _rtDW -> caerwfkxfedn [ 0 ] .
+bsw4sh0ine . Head [ 3 ] < ( _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine .
+CircularBufSize [ 3 ] - 1 ) ) ? ( _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine .
+Head [ 3 ] + 1 ) : 0 ) ; if ( _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Head
+[ 3 ] == _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Tail [ 3 ] ) { if ( !
+MultiVehicleModel_acc_rt_TDelayUpdateTailOrGrowBuf ( & _rtDW -> caerwfkxfedn
+[ 0 ] . bsw4sh0ine . CircularBufSize [ 3 ] , & _rtDW -> caerwfkxfedn [ 0 ] .
+bsw4sh0ine . Tail [ 3 ] , & _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Head [
+3 ] , & _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Last [ 3 ] , simTime -
+_rtP -> caerwfkxfedn . P_1 , tBuffer , uBuffer , xBuffer , ( boolean_T ) 0 ,
+( boolean_T ) 0 , & _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . MaxNewBufSize
+) ) { ssSetErrorStatus ( S , "vtdelay memory allocation error" ) ; return ; }
+} ( * tBuffer ) [ _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Head [ 3 ] ] =
+simTime ; ( * uBuffer ) [ _rtDW -> caerwfkxfedn [ 0 ] . bsw4sh0ine . Head [ 3
+] ] = _rtB -> caerwfkxfedn [ 0 ] . nc31pf2wlw ; } ssCallAccelCopyCacheForIIS
+( S , 56 , ( void * ) 0 ) ; _rtDW -> poe1w2tyiw ++ ; } if ( ssIsSampleHit ( S
+, 1 , 0 ) ) { } _rtDW -> fbn0fcdbpe = 0 ; while ( _rtDW -> fbn0fcdbpe < 1 ) {
+ssCallAccelCopyCacheForIIS ( S , 47 , ( void * ) 1 ) ; _rtB -> o1jfak3lo1 [ 0
+] = _rtB -> cwvxovdsaz [ 0 ] ; _rtB -> o1jfak3lo1 [ 1 ] = _rtB -> cwvxovdsaz
+[ 1 ] ; _rtB -> o1jfak3lo1 [ 2 ] = _rtB -> cwvxovdsaz [ 2 ] ; _rtB ->
+o1jfak3lo1 [ 3 ] = _rtB -> cwvxovdsaz [ 3 ] ; if ( ssIsSampleHit ( S , 1 , 0
+) ) { _rtDW -> caerwfkxfed [ 0 ] . ng1z2jrijs += _rtP -> caerwfkxfed . P_107
+* _rtB -> caerwfkxfed [ 0 ] . c4m3fnbvli ; _rtDW -> caerwfkxfed [ 0 ] .
+nj0axyifa2 += _rtP -> caerwfkxfed . P_110 * _rtB -> caerwfkxfed [ 0 ] .
+mc3sfrfenr ; } _rtDW -> caerwfkxfed [ 0 ] . fz52nilcra . IcNeedsLoading = 0 ;
+if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtDW -> caerwfkxfed [ 0 ] . gtkkyzyaof
+= ( _rtB -> caerwfkxfed [ 0 ] . ldtz5l21bv [ 9 ] - _rtP -> caerwfkxfed .
+P_117 [ 1 ] * _rtDW -> caerwfkxfed [ 0 ] . gtkkyzyaof ) / _rtP -> caerwfkxfed
+. P_117 [ 0 ] ; for ( idxWidth = 0 ; idxWidth < 19 ; idxWidth ++ ) { _rtDW ->
+caerwfkxfed [ 0 ] . ecr3a224ty [ ( uint32_T ) idxWidth ] = _rtDW ->
+caerwfkxfed [ 0 ] . ecr3a224ty [ 19U + idxWidth ] ; } memcpy ( & _rtDW ->
+caerwfkxfed [ 0 ] . ecr3a224ty [ 19 ] , & _rtB -> caerwfkxfed [ 0 ] .
+f2lj4ilbid [ 0 ] , 19U * sizeof ( real_T ) ) ; } _rtDW -> caerwfkxfed [ 0 ] .
+ippukhhcqi . IcNeedsLoading = 0 ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtDW
+-> caerwfkxfed [ 0 ] . pdjtn40ptq += _rtP -> caerwfkxfed . P_135 * _rtB ->
+caerwfkxfed [ 0 ] . ndsw5rbzw5 ; } _rtDW -> caerwfkxfed [ 0 ] . mdtrpadce1 .
+IcNeedsLoading = 0 ; _rtDW -> caerwfkxfed [ 0 ] . ezyys0x2oe . IcNeedsLoading
+= 0 ; _rtDW -> caerwfkxfed [ 0 ] . o5qsrxtfr0 . IcNeedsLoading = 0 ; _rtDW ->
+caerwfkxfed [ 0 ] . buaseqaif4 . IcNeedsLoading = 0 ; if ( ssIsSampleHit ( S
+, 1 , 0 ) ) { _rtDW -> caerwfkxfed [ 0 ] . iuvpzqdghs = _rtDW -> caerwfkxfed
+[ 0 ] . fy2knprxfh ; } _rtDW -> caerwfkxfed [ 0 ] . mfyayib1vs .
+IcNeedsLoading = 0 ; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtDW ->
+caerwfkxfed [ 0 ] . itm1fber1d += _rtP -> caerwfkxfed . P_181 * _rtB ->
+caerwfkxfed [ 0 ] . iq4tus41ez ; _rtDW -> caerwfkxfed [ 0 ] . kvy3yj5nb3 = (
+_rtB -> caerwfkxfed [ 0 ] . ldtz5l21bv [ 10 ] - _rtP -> caerwfkxfed . P_186 [
+1 ] * _rtDW -> caerwfkxfed [ 0 ] . kvy3yj5nb3 ) / _rtP -> caerwfkxfed . P_186
+[ 0 ] ; _rtDW -> caerwfkxfed [ 0 ] . jwmgh2kg2m = rt_nrand_Upu32_Yd_f_pw_snf
+( & _rtDW -> caerwfkxfed [ 0 ] . oowjxn5bpe ) * _rtP -> caerwfkxfed . P_248 +
+_rtP -> caerwfkxfed . P_247 ; _rtDW -> caerwfkxfed [ 0 ] . fhehrp2bxm [ 0 ] =
+_rtB -> caerwfkxfed [ 0 ] . g3jwsdmrfo [ 0 ] ; _rtDW -> caerwfkxfed [ 0 ] .
+fhehrp2bxm [ 1 ] = _rtB -> caerwfkxfed [ 0 ] . g3jwsdmrfo [ 1 ] ; _rtDW ->
+caerwfkxfed [ 0 ] . fhehrp2bxm [ 2 ] = _rtB -> caerwfkxfed [ 0 ] . g3jwsdmrfo
+[ 2 ] ; _rtDW -> caerwfkxfed [ 0 ] . kcxjckmad1 = rt_nrand_Upu32_Yd_f_pw_snf
+( & _rtDW -> caerwfkxfed [ 0 ] . hn5qi2vxwm ) * _rtP -> caerwfkxfed . P_258 +
+_rtP -> caerwfkxfed . P_257 ; _rtDW -> caerwfkxfed [ 0 ] . ecmyxunq25 =
+rt_nrand_Upu32_Yd_f_pw_snf ( & _rtDW -> caerwfkxfed [ 0 ] . jtvcy50o1r ) *
+_rtP -> caerwfkxfed . P_266 + _rtP -> caerwfkxfed . P_265 ; _rtDW ->
+caerwfkxfed [ 0 ] . o1dm2gnr44 = rt_nrand_Upu32_Yd_f_pw_snf ( & _rtDW ->
+caerwfkxfed [ 0 ] . hltfskcdzq ) * _rtP -> caerwfkxfed . P_274 + _rtP ->
+caerwfkxfed . P_273 ; _rtDW -> caerwfkxfed [ 0 ] . mbdfohgcix [ 0 ] = _rtB ->
+caerwfkxfed [ 0 ] . g10hpkgud2 [ 0 ] ; _rtDW -> caerwfkxfed [ 0 ] .
+mbdfohgcix [ 1 ] = _rtB -> caerwfkxfed [ 0 ] . g10hpkgud2 [ 1 ] ; _rtDW ->
+caerwfkxfed [ 0 ] . mbdfohgcix [ 2 ] = _rtB -> caerwfkxfed [ 0 ] . g10hpkgud2
+[ 2 ] ; } if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtDW -> caerwfkxfed [ 0 ] .
+n5w1vbpkm1 = rt_nrand_Upu32_Yd_f_pw_snf ( & _rtDW -> caerwfkxfed [ 0 ] .
+ic4dmdfvpt ) * _rtP -> caerwfkxfed . P_374 + _rtP -> caerwfkxfed . P_373 ;
+_rtDW -> caerwfkxfed [ 0 ] . ii3efjiukm = rt_nrand_Upu32_Yd_f_pw_snf ( &
+_rtDW -> caerwfkxfed [ 0 ] . nxeftxvgnt ) * _rtP -> caerwfkxfed . P_382 +
+_rtP -> caerwfkxfed . P_381 ; _rtDW -> caerwfkxfed [ 0 ] . anzbkhzxt1 =
+rt_nrand_Upu32_Yd_f_pw_snf ( & _rtDW -> caerwfkxfed [ 0 ] . hpidrxtvg5 ) *
+_rtP -> caerwfkxfed . P_390 + _rtP -> caerwfkxfed . P_389 ; _rtDW ->
+caerwfkxfed [ 0 ] . jfa2ekpuah = rt_nrand_Upu32_Yd_f_pw_snf ( & _rtDW ->
+caerwfkxfed [ 0 ] . muraaxxixm ) * _rtP -> caerwfkxfed . P_399 + _rtP ->
+caerwfkxfed . P_398 ; _rtDW -> caerwfkxfed [ 0 ] . eded13czzw =
+rt_nrand_Upu32_Yd_f_pw_snf ( & _rtDW -> caerwfkxfed [ 0 ] . pvl1czxv5b ) *
+_rtP -> caerwfkxfed . P_407 + _rtP -> caerwfkxfed . P_406 ; _rtDW ->
+caerwfkxfed [ 0 ] . fgy225ioz4 = rt_nrand_Upu32_Yd_f_pw_snf ( & _rtDW ->
+caerwfkxfed [ 0 ] . gugm2rdkq4 ) * _rtP -> caerwfkxfed . P_415 + _rtP ->
+caerwfkxfed . P_414 ; _rtDW -> caerwfkxfed [ 0 ] . hke2uzx4jz = _rtB ->
+caerwfkxfed [ 0 ] . byamy2nve4 ; _rtDW -> caerwfkxfed [ 0 ] . eh3f4zmls1 =
+_rtB -> caerwfkxfed [ 0 ] . fuduxrsc4d ; _rtDW -> caerwfkxfed [ 0 ] .
+bd2u1zxgbl = _rtB -> caerwfkxfed [ 0 ] . lvagqtztdp ; _rtDW -> caerwfkxfed [
+0 ] . eiplfbwsnl = _rtB -> caerwfkxfed [ 0 ] . h2e4rkx2g5 ; } if ( _rtDW ->
+caerwfkxfed [ 0 ] . dtafal24mu ) { } mn1012evq4 ( & _rtDW -> caerwfkxfed [ 0
+] . kjarfumpbl ) ; mn1012evq4 ( & _rtDW -> caerwfkxfed [ 0 ] . gamgx1mju3p )
+; if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtDW -> caerwfkxfed [ 0 ] .
+oxlqqwwlxq [ 0 ] = rt_nrand_Upu32_Yd_f_pw_snf ( & _rtDW -> caerwfkxfed [ 0 ]
+. kzcbnxj5n5 [ 0 ] ) * _rtP -> caerwfkxfed . P_536 + _rtP -> caerwfkxfed .
+P_535 ; _rtDW -> caerwfkxfed [ 0 ] . oxlqqwwlxq [ 1 ] =
+rt_nrand_Upu32_Yd_f_pw_snf ( & _rtDW -> caerwfkxfed [ 0 ] . kzcbnxj5n5 [ 1 ]
+) * _rtP -> caerwfkxfed . P_536 + _rtP -> caerwfkxfed . P_535 ; _rtDW ->
+caerwfkxfed [ 0 ] . oxlqqwwlxq [ 2 ] = rt_nrand_Upu32_Yd_f_pw_snf ( & _rtDW
+-> caerwfkxfed [ 0 ] . kzcbnxj5n5 [ 2 ] ) * _rtP -> caerwfkxfed . P_536 +
+_rtP -> caerwfkxfed . P_535 ; } if ( _rtDW -> caerwfkxfed [ 0 ] . bbt2ziimvg
+&& ssIsSampleHit ( S , 1 , 0 ) ) { _rtDW -> caerwfkxfed [ 0 ] . bgonkmaxgg [
+0 ] = _rtB -> caerwfkxfed [ 0 ] . h5ibc1nv05 [ 0 ] ; _rtDW -> caerwfkxfed [ 0
+] . bgonkmaxgg [ 1 ] = _rtB -> caerwfkxfed [ 0 ] . h5ibc1nv05 [ 1 ] ; } if (
+_rtDW -> caerwfkxfed [ 0 ] . cmieftitsl && ssIsSampleHit ( S , 1 , 0 ) ) {
+_rtDW -> caerwfkxfed [ 0 ] . loeehoagwe [ 0 ] = _rtB -> caerwfkxfed [ 0 ] .
+jowycjebg2 [ 0 ] ; _rtDW -> caerwfkxfed [ 0 ] . loeehoagwe [ 1 ] = _rtB ->
+caerwfkxfed [ 0 ] . jowycjebg2 [ 1 ] ; } if ( _rtDW -> caerwfkxfed [ 0 ] .
+hty3xldkx0 && ssIsSampleHit ( S , 1 , 0 ) ) { _rtDW -> caerwfkxfed [ 0 ] .
+eczfn4i2re [ 0 ] = _rtB -> caerwfkxfed [ 0 ] . lc1o51rpx2 [ 0 ] ; _rtDW ->
+caerwfkxfed [ 0 ] . eczfn4i2re [ 1 ] = _rtB -> caerwfkxfed [ 0 ] . lc1o51rpx2
+[ 1 ] ; } if ( ssIsSampleHit ( S , 1 , 0 ) ) { _rtDW -> caerwfkxfed [ 0 ] .
+idpd1gggpl = rt_nrand_Upu32_Yd_f_pw_snf ( & _rtDW -> caerwfkxfed [ 0 ] .
+pwtau02qvo ) * _rtP -> caerwfkxfed . P_551 + _rtP -> caerwfkxfed . P_550 ; }
+if ( _rtDW -> caerwfkxfed [ 0 ] . fh1n4qqnhr && ssIsSampleHit ( S , 1 , 0 ) )
+{ _rtDW -> caerwfkxfed [ 0 ] . kyo3cp5usa [ 0 ] = _rtB -> caerwfkxfed [ 0 ] .
+g3gadhyjyx [ 0 ] ; _rtDW -> caerwfkxfed [ 0 ] . kyo3cp5usa [ 1 ] = _rtB ->
+caerwfkxfed [ 0 ] . g3gadhyjyx [ 1 ] ; } if ( _rtDW -> caerwfkxfed [ 0 ] .
+bhpes5cxsx && ssIsSampleHit ( S , 1 , 0 ) ) { _rtDW -> caerwfkxfed [ 0 ] .
+i3mmplfdom [ 0 ] = _rtB -> caerwfkxfed [ 0 ] . h2by3upa5l [ 0 ] ; _rtDW ->
+caerwfkxfed [ 0 ] . i3mmplfdom [ 1 ] = _rtB -> caerwfkxfed [ 0 ] . h2by3upa5l
+[ 1 ] ; _rtDW -> caerwfkxfed [ 0 ] . mwvb4h5q5n [ 0 ] = _rtB -> caerwfkxfed [
+0 ] . lc1o51rpx2 [ 0 ] ; _rtDW -> caerwfkxfed [ 0 ] . mwvb4h5q5n [ 1 ] = _rtB
+-> caerwfkxfed [ 0 ] . lc1o51rpx2 [ 1 ] ; } if ( _rtDW -> caerwfkxfed [ 0 ] .
+mpzqla0as5 && ssIsSampleHit ( S , 1 , 0 ) ) { _rtDW -> caerwfkxfed [ 0 ] .
+cz0yulgjkl [ 0 ] = _rtB -> caerwfkxfed [ 0 ] . pd4szq5but [ 0 ] ; _rtDW ->
+caerwfkxfed [ 0 ] . cz0yulgjkl [ 1 ] = _rtB -> caerwfkxfed [ 0 ] . pd4szq5but
+[ 1 ] ; _rtDW -> caerwfkxfed [ 0 ] . gkupuf105z [ 0 ] = _rtB -> caerwfkxfed [
+0 ] . jowycjebg2 [ 0 ] ; _rtDW -> caerwfkxfed [ 0 ] . gkupuf105z [ 1 ] = _rtB
+-> caerwfkxfed [ 0 ] . jowycjebg2 [ 1 ] ; } ssCallAccelCopyCacheForIIS ( S ,
+47 , ( void * ) 0 ) ; _rtDW -> fbn0fcdbpe ++ ; } if ( ssIsSampleHit ( S , 1 ,
+0 ) ) { } UNUSED_PARAMETER ( tid ) ; }
+#define MDL_DERIVATIVES
+static void mdlDerivatives ( SimStruct * S ) { n3qi1whofz * _rtB ; loikxjbxjg
+* _rtP ; f1xhd02yjc * _rtX ; pqmvzr1kvu * _rtXdot ; ew10rzwqr2 * _rtDW ;
+_rtDW = ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) ; _rtXdot = ( ( pqmvzr1kvu
+* ) ssGetdX ( S ) ) ; _rtX = ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) ;
+_rtP = ( ( loikxjbxjg * ) ssGetDefaultParam ( S ) ) ; _rtB = ( ( n3qi1whofz *
+) _ssGetBlockIO ( S ) ) ; _rtDW -> bpzo543yxr = 0 ; while ( _rtDW ->
+bpzo543yxr < 3 ) { ssCallAccelCopyCacheForIIS ( S , 5 , ( void * ) 1 ) ; _rtB
+-> kbid4ztlyb [ 0 ] = _rtB -> kity0pstnv [ _rtDW -> bpzo543yxr << 1 ] ; _rtB
+-> kbid4ztlyb [ 1 ] = _rtB -> kity0pstnv [ ( _rtDW -> bpzo543yxr << 1 ) + 1 ]
+; { ( ( pqmvzr1kvu * ) ssGetdX ( S ) ) -> caerwfkxfe [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> bpzo543yxr ] . eohuwdncyi [ 0 ] = _rtB ->
+caerwfkxfe [ 0 ] . n2igl21kkq ; ( ( pqmvzr1kvu * ) ssGetdX ( S ) ) ->
+caerwfkxfe [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> bpzo543yxr ] .
+eohuwdncyi [ 1 ] = _rtB -> caerwfkxfe [ 0 ] . l5ngnxi3xc ; ( ( pqmvzr1kvu * )
+ssGetdX ( S ) ) -> caerwfkxfe [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) ->
+bpzo543yxr ] . eohuwdncyi [ 2 ] = _rtB -> caerwfkxfe [ 0 ] . ewa4rv34ze ; }
+_rtXdot -> caerwfkxfe [ _rtDW -> bpzo543yxr ] . aknjejchsh = 0.0 ; _rtXdot ->
+caerwfkxfe [ _rtDW -> bpzo543yxr ] . aknjejchsh += _rtP -> caerwfkxfe . P_35
+* _rtX -> caerwfkxfe [ _rtDW -> bpzo543yxr ] . aknjejchsh ; _rtXdot ->
+caerwfkxfe [ _rtDW -> bpzo543yxr ] . aknjejchsh += _rtB -> caerwfkxfe [ 0 ] .
+piv3qevqcx ; ssCallAccelCopyCacheForIIS ( S , 5 , ( void * ) 0 ) ; _rtDW ->
+bpzo543yxr ++ ; } _rtDW -> poe1w2tyiw = 0 ; while ( _rtDW -> poe1w2tyiw < 2 )
+{ ssCallAccelCopyCacheForIIS ( S , 56 , ( void * ) 1 ) ; { ( ( pqmvzr1kvu * )
+ssGetdX ( S ) ) -> caerwfkxfedn [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) )
+-> poe1w2tyiw ] . omleyqegil [ 0 ] = _rtB -> caerwfkxfedn [ 0 ] . ciylkhjfxx
+[ 0 ] ; ( ( pqmvzr1kvu * ) ssGetdX ( S ) ) -> caerwfkxfedn [ ( ( ew10rzwqr2 *
+) ssGetRootDWork ( S ) ) -> poe1w2tyiw ] . omleyqegil [ 1 ] = _rtB ->
+caerwfkxfedn [ 0 ] . ciylkhjfxx [ 1 ] ; ( ( pqmvzr1kvu * ) ssGetdX ( S ) ) ->
+caerwfkxfedn [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> poe1w2tyiw ] .
+omleyqegil [ 2 ] = _rtB -> caerwfkxfedn [ 0 ] . onquqayms1 ; } { ( (
+pqmvzr1kvu * ) ssGetdX ( S ) ) -> caerwfkxfedn [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> poe1w2tyiw ] . nk4n0e1wzr = _rtB -> caerwfkxfedn [
+0 ] . p0ypdf02cf ; } { } _rtXdot -> caerwfkxfedn [ _rtDW -> poe1w2tyiw ] .
+fqzeriji0s = 0.0 ; _rtXdot -> caerwfkxfedn [ _rtDW -> poe1w2tyiw ] .
+fqzeriji0s += _rtP -> caerwfkxfedn . P_11 * _rtX -> caerwfkxfedn [ _rtDW ->
+poe1w2tyiw ] . fqzeriji0s ; _rtXdot -> caerwfkxfedn [ _rtDW -> poe1w2tyiw ] .
+fqzeriji0s += _rtB -> caerwfkxfedn [ 0 ] . mbhzv5o4u4 ; _rtXdot ->
+caerwfkxfedn [ _rtDW -> poe1w2tyiw ] . an4vvbaly0 = 0.0 ; _rtXdot ->
+caerwfkxfedn [ _rtDW -> poe1w2tyiw ] . an4vvbaly0 += _rtP -> caerwfkxfedn .
+P_14 * _rtX -> caerwfkxfedn [ _rtDW -> poe1w2tyiw ] . an4vvbaly0 ; _rtXdot ->
+caerwfkxfedn [ _rtDW -> poe1w2tyiw ] . an4vvbaly0 += _rtB -> caerwfkxfedn [ 0
+] . ajggpqb1ch ; _rtXdot -> caerwfkxfedn [ _rtDW -> poe1w2tyiw ] . c1j0xx0tdy
+= 0.0 ; _rtXdot -> caerwfkxfedn [ _rtDW -> poe1w2tyiw ] . c1j0xx0tdy += _rtP
+-> caerwfkxfedn . P_17 * _rtX -> caerwfkxfedn [ _rtDW -> poe1w2tyiw ] .
+c1j0xx0tdy ; _rtXdot -> caerwfkxfedn [ _rtDW -> poe1w2tyiw ] . c1j0xx0tdy +=
+_rtB -> caerwfkxfedn [ 0 ] . lhaxx34w2u ; _rtXdot -> caerwfkxfedn [ _rtDW ->
+poe1w2tyiw ] . jbtfdrl5ag = 0.0 ; _rtXdot -> caerwfkxfedn [ _rtDW ->
+poe1w2tyiw ] . jbtfdrl5ag += _rtP -> caerwfkxfedn . P_19 * _rtX ->
+caerwfkxfedn [ _rtDW -> poe1w2tyiw ] . jbtfdrl5ag ; _rtXdot -> caerwfkxfedn [
+_rtDW -> poe1w2tyiw ] . jbtfdrl5ag += _rtB -> caerwfkxfedn [ 0 ] . n2yhmwdnxy
+; _rtXdot -> caerwfkxfedn [ _rtDW -> poe1w2tyiw ] . ekznrhxfnh = 0.0 ;
+_rtXdot -> caerwfkxfedn [ _rtDW -> poe1w2tyiw ] . ekznrhxfnh += _rtP ->
+caerwfkxfedn . P_21 * _rtX -> caerwfkxfedn [ _rtDW -> poe1w2tyiw ] .
+ekznrhxfnh ; _rtXdot -> caerwfkxfedn [ _rtDW -> poe1w2tyiw ] . ekznrhxfnh +=
+_rtB -> caerwfkxfedn [ 0 ] . gw2c2lyxy5 ; _rtXdot -> caerwfkxfedn [ _rtDW ->
+poe1w2tyiw ] . duh05ekusm = 0.0 ; _rtXdot -> caerwfkxfedn [ _rtDW ->
+poe1w2tyiw ] . duh05ekusm += _rtP -> caerwfkxfedn . P_23 * _rtX ->
+caerwfkxfedn [ _rtDW -> poe1w2tyiw ] . duh05ekusm ; _rtXdot -> caerwfkxfedn [
+_rtDW -> poe1w2tyiw ] . duh05ekusm += _rtB -> caerwfkxfedn [ 0 ] . cwkmcmdzfo
+; ssCallAccelCopyCacheForIIS ( S , 56 , ( void * ) 0 ) ; _rtDW -> poe1w2tyiw
+++ ; } _rtDW -> fbn0fcdbpe = 0 ; while ( _rtDW -> fbn0fcdbpe < 1 ) {
+ssCallAccelCopyCacheForIIS ( S , 47 , ( void * ) 1 ) ; _rtB -> o1jfak3lo1 [ 0
+] = _rtB -> cwvxovdsaz [ 0 ] ; _rtB -> o1jfak3lo1 [ 1 ] = _rtB -> cwvxovdsaz
+[ 1 ] ; _rtB -> o1jfak3lo1 [ 2 ] = _rtB -> cwvxovdsaz [ 2 ] ; _rtB ->
+o1jfak3lo1 [ 3 ] = _rtB -> cwvxovdsaz [ 3 ] ; { ( ( pqmvzr1kvu * ) ssGetdX (
+S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) ->
+fbn0fcdbpe ] . n0vhadqx00 [ 0 ] = _rtB -> caerwfkxfed [ 0 ] . dj3m0zwauj ; (
+( pqmvzr1kvu * ) ssGetdX ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . n0vhadqx00 [ 1 ] = _rtB ->
+caerwfkxfed [ 0 ] . gqcsbnkymj ; ( ( pqmvzr1kvu * ) ssGetdX ( S ) ) ->
+caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] .
+n0vhadqx00 [ 2 ] = _rtB -> caerwfkxfed [ 0 ] . onw40tswnj ; } _rtXdot ->
+caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . ihl3kytsj1 [ 0 ] = _rtB -> caerwfkxfed
+[ 0 ] . dcy40tjqwz [ 0 ] ; _rtXdot -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] .
+ihl3kytsj1 [ 1 ] = _rtB -> caerwfkxfed [ 0 ] . dcy40tjqwz [ 1 ] ; _rtXdot ->
+caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . ihl3kytsj1 [ 2 ] = _rtB -> caerwfkxfed
+[ 0 ] . dcy40tjqwz [ 2 ] ; { boolean_T lsat ; boolean_T usat ; lsat = ( ( (
+f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . ckcker4qqi <= _rtP -> caerwfkxfed .
+P_131 ) ; usat = ( ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed
+[ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . ckcker4qqi >=
+_rtP -> caerwfkxfed . P_130 ) ; if ( ( ! lsat && ! usat ) || ( lsat && ( _rtB
+-> caerwfkxfed [ 0 ] . lf33jo1eey > 0 ) ) || ( usat && ( _rtB -> caerwfkxfed
+[ 0 ] . lf33jo1eey < 0 ) ) ) { ( ( pqmvzr1kvu * ) ssGetdX ( S ) ) ->
+caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] .
+ckcker4qqi = _rtB -> caerwfkxfed [ 0 ] . lf33jo1eey ; } else { ( ( pqmvzr1kvu
+* ) ssGetdX ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S )
+) -> fbn0fcdbpe ] . ckcker4qqi = 0.0 ; } } { boolean_T lsat ; boolean_T usat
+; lsat = ( ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( (
+ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . jl2gr241to <= _rtP ->
+caerwfkxfed . P_149 ) ; usat = ( ( ( f1xhd02yjc * ) ssGetContStates ( S ) )
+-> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] .
+jl2gr241to >= _rtP -> caerwfkxfed . P_148 ) ; if ( ( ! lsat && ! usat ) || (
+lsat && ( _rtB -> caerwfkxfed [ 0 ] . mzqc2pyano > 0 ) ) || ( usat && ( _rtB
+-> caerwfkxfed [ 0 ] . mzqc2pyano < 0 ) ) ) { ( ( pqmvzr1kvu * ) ssGetdX ( S
+) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe
+] . jl2gr241to = _rtB -> caerwfkxfed [ 0 ] . mzqc2pyano ; } else { ( (
+pqmvzr1kvu * ) ssGetdX ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . jl2gr241to = 0.0 ; } } { boolean_T
+lsat ; boolean_T usat ; lsat = ( ( ( f1xhd02yjc * ) ssGetContStates ( S ) )
+-> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] .
+bz1moouyu2 <= _rtP -> caerwfkxfed . P_156 ) ; usat = ( ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork (
+S ) ) -> fbn0fcdbpe ] . bz1moouyu2 >= _rtP -> caerwfkxfed . P_155 ) ; if ( (
+! lsat && ! usat ) || ( lsat && ( _rtB -> caerwfkxfed [ 0 ] . eeaqjfivi2 > 0
+) ) || ( usat && ( _rtB -> caerwfkxfed [ 0 ] . eeaqjfivi2 < 0 ) ) ) { ( (
+pqmvzr1kvu * ) ssGetdX ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . bz1moouyu2 = _rtB -> caerwfkxfed [ 0
+] . eeaqjfivi2 ; } else { ( ( pqmvzr1kvu * ) ssGetdX ( S ) ) -> caerwfkxfed [
+( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . bz1moouyu2 = 0.0
+; } } { boolean_T lsat ; boolean_T usat ; lsat = ( ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork (
+S ) ) -> fbn0fcdbpe ] . he501jqmwr <= _rtP -> caerwfkxfed . P_162 ) ; usat =
+( ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2
+* ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . he501jqmwr >= _rtP ->
+caerwfkxfed . P_161 ) ; if ( ( ! lsat && ! usat ) || ( lsat && ( _rtB ->
+caerwfkxfed [ 0 ] . mxwdorti1i > 0 ) ) || ( usat && ( _rtB -> caerwfkxfed [ 0
+] . mxwdorti1i < 0 ) ) ) { ( ( pqmvzr1kvu * ) ssGetdX ( S ) ) -> caerwfkxfed
+[ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . he501jqmwr =
+_rtB -> caerwfkxfed [ 0 ] . mxwdorti1i ; } else { ( ( pqmvzr1kvu * ) ssGetdX
+( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) ->
+fbn0fcdbpe ] . he501jqmwr = 0.0 ; } } { boolean_T lsat ; boolean_T usat ;
+lsat = ( ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( (
+ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . fhxf25u0ju <= _rtP ->
+caerwfkxfed . P_168 ) ; usat = ( ( ( f1xhd02yjc * ) ssGetContStates ( S ) )
+-> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] .
+fhxf25u0ju >= _rtP -> caerwfkxfed . P_167 ) ; if ( ( ! lsat && ! usat ) || (
+lsat && ( _rtB -> caerwfkxfed [ 0 ] . fsyxgxizlr > 0 ) ) || ( usat && ( _rtB
+-> caerwfkxfed [ 0 ] . fsyxgxizlr < 0 ) ) ) { ( ( pqmvzr1kvu * ) ssGetdX ( S
+) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe
+] . fhxf25u0ju = _rtB -> caerwfkxfed [ 0 ] . fsyxgxizlr ; } else { ( (
+pqmvzr1kvu * ) ssGetdX ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . fhxf25u0ju = 0.0 ; } } { boolean_T
+lsat ; boolean_T usat ; lsat = ( ( ( f1xhd02yjc * ) ssGetContStates ( S ) )
+-> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] .
+oi11ijmh5w <= _rtP -> caerwfkxfed . P_177 ) ; usat = ( ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork (
+S ) ) -> fbn0fcdbpe ] . oi11ijmh5w >= _rtP -> caerwfkxfed . P_176 ) ; if ( (
+! lsat && ! usat ) || ( lsat && ( _rtB -> caerwfkxfed [ 0 ] . pnwyjyh04z > 0
+) ) || ( usat && ( _rtB -> caerwfkxfed [ 0 ] . pnwyjyh04z < 0 ) ) ) { ( (
+pqmvzr1kvu * ) ssGetdX ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * )
+ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . oi11ijmh5w = _rtB -> caerwfkxfed [ 0
+] . pnwyjyh04z ; } else { ( ( pqmvzr1kvu * ) ssGetdX ( S ) ) -> caerwfkxfed [
+( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . oi11ijmh5w = 0.0
+; } } _rtXdot -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . d44k1xtr5y [ 0 ] =
+_rtB -> caerwfkxfed [ 0 ] . awzqhtqebw [ 0 ] ; _rtXdot -> caerwfkxfed [ _rtDW
+-> fbn0fcdbpe ] . d44k1xtr5y [ 1 ] = _rtB -> caerwfkxfed [ 0 ] . awzqhtqebw [
+1 ] ; _rtXdot -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . d44k1xtr5y [ 2 ] =
+_rtB -> caerwfkxfed [ 0 ] . awzqhtqebw [ 2 ] ; _rtXdot -> caerwfkxfed [ _rtDW
+-> fbn0fcdbpe ] . jo1on23gqr [ 0 ] = _rtB -> caerwfkxfed [ 0 ] . bzpfvgxcae [
+0 ] ; _rtXdot -> caerwfkxfed [ _rtDW -> fbn0fcdbpe ] . jo1on23gqr [ 1 ] =
+_rtB -> caerwfkxfed [ 0 ] . bzpfvgxcae [ 1 ] ; _rtXdot -> caerwfkxfed [ _rtDW
+-> fbn0fcdbpe ] . jo1on23gqr [ 2 ] = _rtB -> caerwfkxfed [ 0 ] . bzpfvgxcae [
+2 ] ; { boolean_T lsat ; boolean_T usat ; lsat = ( ( ( f1xhd02yjc * )
+ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork (
+S ) ) -> fbn0fcdbpe ] . m41w0ewt02 <= _rtP -> caerwfkxfed . P_357 ) ; usat =
+( ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2
+* ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . m41w0ewt02 >= _rtP ->
+caerwfkxfed . P_356 ) ; if ( ( ! lsat && ! usat ) || ( lsat && ( _rtB ->
+caerwfkxfed [ 0 ] . mcwf2waokx > 0 ) ) || ( usat && ( _rtB -> caerwfkxfed [ 0
+] . mcwf2waokx < 0 ) ) ) { ( ( pqmvzr1kvu * ) ssGetdX ( S ) ) -> caerwfkxfed
+[ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . m41w0ewt02 =
+_rtB -> caerwfkxfed [ 0 ] . mcwf2waokx ; } else { ( ( pqmvzr1kvu * ) ssGetdX
+( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) ->
+fbn0fcdbpe ] . m41w0ewt02 = 0.0 ; } } if ( _rtDW -> caerwfkxfed [ 0 ] .
+dtafal24mu ) { { boolean_T lsat ; boolean_T usat ; lsat = ( ( ( f1xhd02yjc *
+) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork
+( S ) ) -> fbn0fcdbpe ] . dh1nyl2cji <= _rtP -> caerwfkxfed . P_50 ) ; usat =
+( ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2
+* ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . dh1nyl2cji >= _rtP ->
+caerwfkxfed . P_49 ) ; if ( ( ! lsat && ! usat ) || ( lsat && ( _rtB ->
+caerwfkxfed [ 0 ] . ckhmhsu3dr > 0 ) ) || ( usat && ( _rtB -> caerwfkxfed [ 0
+] . ckhmhsu3dr < 0 ) ) ) { ( ( pqmvzr1kvu * ) ssGetdX ( S ) ) -> caerwfkxfed
+[ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . dh1nyl2cji =
+_rtB -> caerwfkxfed [ 0 ] . ckhmhsu3dr ; } else { ( ( pqmvzr1kvu * ) ssGetdX
+( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) ->
+fbn0fcdbpe ] . dh1nyl2cji = 0.0 ; } } } else { ( ( pqmvzr1kvu * ) ssGetdX ( S
+) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe
+] . dh1nyl2cji = 0.0 ; } bdg4dfoelg ( _rtB -> caerwfkxfed [ 0 ] . ckhmhsu3dr
+, & _rtDW -> caerwfkxfed [ 0 ] . kjarfumpbl , ( bw1rqnuzxz * ) & _rtP ->
+caerwfkxfed . kjarfumpbl , & ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) ->
+caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] .
+kjarfumpbl , & ( ( pqmvzr1kvu * ) ssGetdX ( S ) ) -> caerwfkxfed [ ( (
+ew10rzwqr2 * ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . kjarfumpbl ) ;
+bdg4dfoelg ( _rtB -> caerwfkxfed [ 0 ] . ckhmhsu3dr , & _rtDW -> caerwfkxfed
+[ 0 ] . gamgx1mju3p , ( bw1rqnuzxz * ) & _rtP -> caerwfkxfed . gamgx1mju3p ,
+& ( ( f1xhd02yjc * ) ssGetContStates ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2
+* ) ssGetRootDWork ( S ) ) -> fbn0fcdbpe ] . gamgx1mju3p , & ( ( pqmvzr1kvu *
+) ssGetdX ( S ) ) -> caerwfkxfed [ ( ( ew10rzwqr2 * ) ssGetRootDWork ( S ) )
+-> fbn0fcdbpe ] . gamgx1mju3p ) ; ssCallAccelCopyCacheForIIS ( S , 47 , (
+void * ) 0 ) ; _rtDW -> fbn0fcdbpe ++ ; } } static void mdlInitializeSizes (
+SimStruct * S ) { ssSetChecksumVal ( S , 0 , 2032613970U ) ; ssSetChecksumVal
+( S , 1 , 2096887463U ) ; ssSetChecksumVal ( S , 2 , 213032924U ) ;
+ssSetChecksumVal ( S , 3 , 1270583134U ) ; { mxArray * slVerStructMat = NULL
+; mxArray * slStrMat = mxCreateString ( "simulink" ) ; char slVerChar [ 10 ]
+; int status = mexCallMATLAB ( 1 , & slVerStructMat , 1 , & slStrMat , "ver"
+) ; if ( status == 0 ) { mxArray * slVerMat = mxGetField ( slVerStructMat , 0
+, "Version" ) ; if ( slVerMat == NULL ) { status = 1 ; } else { status =
+mxGetString ( slVerMat , slVerChar , 10 ) ; } } mxDestroyArray ( slStrMat ) ;
+mxDestroyArray ( slVerStructMat ) ; if ( ( status == 1 ) || ( strcmp (
+slVerChar , "8.3" ) != 0 ) ) { return ; } } ssSetOptions ( S ,
+SS_OPTION_EXCEPTION_FREE_CODE ) ; if ( ssGetSizeofDWork ( S ) != sizeof (
+ew10rzwqr2 ) ) { ssSetErrorStatus ( S ,
+"Unexpected error: Internal DWork sizes do "
+"not match for accelerator mex file." ) ; } if ( ssGetSizeofGlobalBlockIO ( S
+) != sizeof ( n3qi1whofz ) ) { ssSetErrorStatus ( S ,
+"Unexpected error: Internal BlockIO sizes do "
+"not match for accelerator mex file." ) ; } { int ssSizeofParams ;
+ssGetSizeofParams ( S , & ssSizeofParams ) ; if ( ssSizeofParams != sizeof (
+loikxjbxjg ) ) { static char msg [ 256 ] ; sprintf ( msg ,
+"Unexpected error: Internal Parameters sizes do "
+"not match for accelerator mex file." ) ; } } _ssSetDefaultParam ( S , (
+real_T * ) & o2iu0a2jke ) ; _ssSetConstBlockIO ( S , & odcn43wyyk ) ;
+rt_InitInfAndNaN ( sizeof ( real_T ) ) ; ( ( loikxjbxjg * ) ssGetDefaultParam
+( S ) ) -> caerwfkxfedn . P_59 = rtInf ; ( ( loikxjbxjg * ) ssGetDefaultParam
+( S ) ) -> caerwfkxfed . P_317 = rtInf ; ( ( loikxjbxjg * ) ssGetDefaultParam
+( S ) ) -> caerwfkxfe . P_31 = rtInf ; } static void mdlInitializeSampleTimes
+( SimStruct * S ) { { SimStruct * childS ; SysOutputFcn * callSysFcns ;
+childS = ssGetSFunction ( S , 0 ) ; callSysFcns =
+ssGetCallSystemOutputFcnList ( childS ) ; callSysFcns [ 3 + 0 ] = (
+SysOutputFcn ) ( NULL ) ; childS = ssGetSFunction ( S , 1 ) ; callSysFcns =
+ssGetCallSystemOutputFcnList ( childS ) ; callSysFcns [ 3 + 0 ] = (
+SysOutputFcn ) ( NULL ) ; childS = ssGetSFunction ( S , 2 ) ; callSysFcns =
+ssGetCallSystemOutputFcnList ( childS ) ; callSysFcns [ 3 + 0 ] = (
+SysOutputFcn ) ( NULL ) ; childS = ssGetSFunction ( S , 3 ) ; callSysFcns =
+ssGetCallSystemOutputFcnList ( childS ) ; callSysFcns [ 3 + 0 ] = (
+SysOutputFcn ) ( NULL ) ; childS = ssGetSFunction ( S , 4 ) ; callSysFcns =
+ssGetCallSystemOutputFcnList ( childS ) ; callSysFcns [ 3 + 0 ] = (
+SysOutputFcn ) ( NULL ) ; childS = ssGetSFunction ( S , 5 ) ; callSysFcns =
+ssGetCallSystemOutputFcnList ( childS ) ; callSysFcns [ 3 + 0 ] = (
+SysOutputFcn ) ( NULL ) ; childS = ssGetSFunction ( S , 6 ) ; callSysFcns =
+ssGetCallSystemOutputFcnList ( childS ) ; callSysFcns [ 3 + 0 ] = (
+SysOutputFcn ) ( NULL ) ; childS = ssGetSFunction ( S , 7 ) ; callSysFcns =
+ssGetCallSystemOutputFcnList ( childS ) ; callSysFcns [ 3 + 0 ] = (
+SysOutputFcn ) ( NULL ) ; childS = ssGetSFunction ( S , 8 ) ; callSysFcns =
+ssGetCallSystemOutputFcnList ( childS ) ; callSysFcns [ 3 + 0 ] = (
+SysOutputFcn ) ( NULL ) ; childS = ssGetSFunction ( S , 9 ) ; callSysFcns =
+ssGetCallSystemOutputFcnList ( childS ) ; callSysFcns [ 3 + 0 ] = (
+SysOutputFcn ) ( NULL ) ; childS = ssGetSFunction ( S , 10 ) ; callSysFcns =
+ssGetCallSystemOutputFcnList ( childS ) ; callSysFcns [ 3 + 0 ] = (
+SysOutputFcn ) ( NULL ) ; } } static void mdlTerminate ( SimStruct * S ) { }
+#include "simulink.c"

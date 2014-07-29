@@ -1,0 +1,86 @@
+
+
+%% ========================================================================
+%% Configuration of Emergency Response Fleet
+
+% Number of ground vehicles
+nGV = 2;
+
+% Number of fixed wing aircraft
+nFW = 2 ;
+
+% Number of rotocraft
+nRC = 2;
+
+
+% San Francisco Fire Department Geodetic Coordinates
+% Latitude = 25.421972222 deg, longitude = 122.085 deg
+SFFDLocation = [37.779861111;  -122.470919444; 0] ;
+
+%% Fixed wing UAV fleet
+
+% All the fixed wing UAVs departing from the same location. Heading is zero
+% degrees with respect to the North.
+
+FWFleet.IC.geodetic = SFFDLocation;
+FWFleet.IC.geodetic(3) = 100 ;
+FWFleet.nFW = nFW;
+
+% Local North-East Coordinates and Heading Angle
+%  All vehicles in a line and separated by 10 (m).
+%  All vehicles heading to the North (0 radians).
+N0 = 0; %
+dN = 10; %(m)
+for k = 1:FWFleet.nFW
+    FWFleet.IC.posNED(:,k) = [N0 ; 0; -100]; % (m)
+    FWFleet.IC.heading(k) = 0;   % (rad)
+    N0 = N0 + dN;
+end
+
+
+%% Ground Vehicle Fleet
+
+% All the ground vehicles departing from the same location. Heading is zero
+% degrees with respect to the North.
+
+GVFleet.IC.geodetic = SFFDLocation;
+GVFleet.nGV = nGV;
+
+% Local North-East Coordinates and Heading Angle
+%  All vehicles in a line and separated by 10 (m).
+%  All vehicles heading to the North (0 radians).
+N0 = -10; %
+dN = 10; %(m)
+for k = 1:GVFleet.nGV
+    GVFleet.IC.posNED(:,k) = [N0 ; 0; 0]; % (m)
+    GVFleet.IC.heading(k) = 0;   % (rad)
+    N0 = N0 - dN;
+end
+
+
+%% Rotorcraft Fleet
+
+% All the rotorcraft vehicles departing from the same location. Heading is
+% zero degrees with respect to the North.
+
+RCFleet.IC.geodetic = SFFDLocation;
+RCFleet.nRC = nRC;
+
+
+% Local North-East Coordinates and Heading Angle
+%  All vehicles in a line and separated by 10 (m).
+%  All vehicles heading to the North (0 radians).
+N0 = -10; %
+dN = 10; %(m)
+for k = 1:RCFleet.nRC
+    RCFleet.IC.posNED(:,k) = [N0 ; 0; 0]; % (m)
+    RCFleet.IC.heading(k) = 0;   % (rad)
+    N0 = N0 - dN;
+end
+
+
+
+
+%% Cleaning workspace
+clear k SFFDLocation nFW nGV nRC ;
+

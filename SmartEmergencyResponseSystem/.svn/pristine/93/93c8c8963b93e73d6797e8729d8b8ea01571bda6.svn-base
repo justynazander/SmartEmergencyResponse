@@ -1,0 +1,23 @@
+classdef DeploymentManager < handle
+    properties (SetAccess = private)
+        isDeployment    % Boolean vector indicating which nodes are deployment nodes
+    end
+    
+    methods
+        function addNodes(obj, newNodes)
+            obj.isDeployment = [obj.isDeployment; logical(newNodes)];
+        end
+        
+        function setDeploymentNode(obj, node)
+            obj.isDeployment(node) = true;
+        end
+        
+        function unsetDeploymentNode(obj, node)
+            obj.isDeployment(node) = false;
+        end
+        
+        function retval = getDeploymentNodes(obj)
+            retval = find(obj.isDeployment);
+        end
+    end
+end

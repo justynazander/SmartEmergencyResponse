@@ -1,0 +1,13 @@
+theaterlatlim = [-122.459450, -122.381392];
+theaterlonlim = [37.773665, 37.811574];
+
+conn = udp('127.0.0.1',9527);
+fopen(conn);
+
+while true
+    lat = theaterlatlim(1)+rand*diff(theaterlatlim);
+    lon = theaterlonlim(1)+rand*diff(theaterlonlim);
+    msg = sprintf('%f8 %f8 %d %d %d %d',lon,lat,randi(2),randi(11),randi(2),randi(10))
+    fprintf(conn,msg);
+    pause(5+randn)
+end

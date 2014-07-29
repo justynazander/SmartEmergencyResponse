@@ -1,0 +1,59 @@
+%% Configuration of Fleets
+
+%cd \\mathworks\Public\David_Escobar_Sanabria\devel\MultiVehicleModel
+%config
+cd \\mathworks\Public\Pieter_Mosterman\nieuwer\projects\summer2013\simulink2earth
+
+% Number of AR.Drones
+nAR = 1;
+
+% Number of persons/props
+nPR = 1 ;
+
+
+% San Francisco Fire Department Geodetic Coordinates
+% Latitude = 25.421972222 deg, longitude = 122.085 deg
+SFFDLocation = [37.779861111;  -122.470919444; 0] ;
+
+%% AR.Drone fleet
+
+ARFleet.IC.geodetic = SFFDLocation;
+ARFleet.IC.geodetic(3) = 100 ;
+ARFleet.nAR = nAR;
+
+% Local North-East Coordinates and Heading Angle
+%  All vehicles in a line and separated by 10 (m).
+%  All vehicles heading to the North (0 radians).
+N0 = 0; %
+dN = 10; %(m)
+for k = 1:ARFleet.nAR
+    ARFleet.IC.posNED(:,k) = [N0 ; 0; -100]; % (m)
+    ARFleet.IC.heading(k) = 0;   % (rad)
+    N0 = N0 + dN;
+end
+
+%% Persons/props fleet
+
+PRFleet.IC.geodetic = SFFDLocation;
+PRFleet.IC.geodetic(3) = 100 ;
+PRFleet.nPR = nPR;
+
+% Local North-East Coordinates and Heading Angle
+%  All vehicles in a line and separated by 10 (m).
+%  All vehicles heading to the North (0 radians).
+N0 = 0; %
+dN = 10; %(m)
+for k = 1:PRFleet.nPR
+    PRFleet.IC.posNED(:,k) = [N0 ; 0; -100]; % (m)
+    PRFleet.IC.heading(k) = 0;   % (rad)
+    N0 = N0 + dN;
+end
+
+%% Configuration of Google Earth fleet ports
+
+GVFleet.gePort = 4012;
+FWFleet.gePort = 4013;
+RCFleet.gePort = 4014;
+ARFleet.gePort = 4015;
+PRFleet.gePort = 4016;
+LAFleet.gePort = 4017;

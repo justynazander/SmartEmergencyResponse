@@ -1,0 +1,47 @@
+classdef Vehicle < handle
+    %% Class representing a generic vehicle
+    properties (SetAccess = private)
+        ID
+    end
+    
+    properties (SetObservable, SetAccess = protected)
+        location    % Current lat/lon of the vehicle
+    end
+    
+    properties (SetObservable, Access = protected)
+        route       % List of destinations indicating the planned route
+    end
+    
+    methods
+        function obj = Vehicle(IDIn, locationIn)
+            obj.ID       = IDIn;
+            obj.location = locationIn;
+            
+            addlistener(obj,'location','PostSet',@(~,~)notify(obj,'locationChanged'));
+            addlistener(obj,'route','PostSet',@(~,~)notify(obj,'routeChanged'));
+        end
+        
+        function retval = getRoute(obj,varargin)
+            if nargin == 1
+                retval = obj.route;
+            else
+                retval = obj.route(varargin{:});
+            end
+        end
+        
+        function setRoute(obj, routeIn)
+            obj.route = routeIn(:);
+        end
+        
+        function delete(obj)
+            notify(obj,'beingDeleted');
+        end
+    end
+    
+    events
+        locationChanged
+        routeChanged
+        beingDeleted
+    end    
+end
+

@@ -1,0 +1,56 @@
+=================================================================================================
+GPS
+=================================================================================================
+Test IP:
+172.28.208.200
+Test Port:
+9527
+
+Packet Format (UDP):
+This is the format of the packet that the gps service sends out.  The data is ASCII text, and each field is separated by a comma:
+
+validity,UTC time,signal quality,latitude,longitude
+
+validity: 0 if the GPS does not have a fix, 1 if it is tracking enough satellites to calculate current location.
+UTC time: Time in UTC of current fix.  The format is "123456", meaning 12:34:56UTC.
+signal quality: Estimation of "horizontal dilution of position", smaller number is better.  See the HDOP table below.
+Latitude: The current latitude in degrees.
+Longitude: the current longitude in degrees.
+
+Packet Examples:
+A packet when the GPS does not have position information looks like this:
+0,005045.302,,,
+Note that the last three fields are empty, and the UTC time field is not guaranteed to make sense.
+
+A packet when the GPS can calculate location looks like this:
+1,065920.000,3.71,36.49433167,-77.488165
+All fields have a value, and the UDC time field is accurate.  Note that the signal quality field is at 3.71, which is "good" according to the HDOP table, but could be better.
+
+
+Table of HDOP values:
+<1.0: Ideal: This is the highest possible confidence level to be used for applications demanding the highest possible precision at all times.
+1.0-2.0: Excellent: At this confidence level, positional measurements are considered accurate enough to meet all but the most sensitive applications.
+2.0-5.0: Good: Represents a level that marks the minimum appropriate for making business decisions. Positional measurements could be used to make reliable in-route navigation suggestions to the user.
+5.0-10.0: Moderate: Positional measurements could be used for calculations, but the fix quality could still be improved. A more open view of the sky is recommended.
+10.0-20.0: Fair: Represents a low confidence level. Positional measurements should be discarded or used only to indicate a very rough estimate of the current location. 
+>20.0: Poor: At this level, measurements are inaccurate by as much as 300 meters with a 6 meter accurate device (50 DOP × 6 meters) and should be discarded.
+
+
+=================================================================================================
+SENSORS
+=================================================================================================
+
+Packet Format (UDP):
+
+This is the format of the packet that the sensor service sends out.  The data is ASCII text, and each field is separated by a comma:
+
+sensor name,UTC time,sensor value
+
+sensor name: The unique name of the sensor
+UTC time: Time in UTC of current reading.  The format is "123456", meaning 12:34:56UTC.
+sensor value: Between 0 and 4095
+
+Packet Examples:
+A packet with a LPG sensor looks like this:
+
+LPG,005045,302

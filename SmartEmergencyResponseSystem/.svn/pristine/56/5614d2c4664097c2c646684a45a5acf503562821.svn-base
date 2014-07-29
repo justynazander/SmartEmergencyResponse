@@ -1,0 +1,13 @@
+classdef QuadCopter < Vehicle
+    %% Class representing a quadcopter drone
+    properties
+    end
+    
+    methods
+        function obj = QuadCopter(IDIn,LocationIn)
+            obj = obj@Vehicle(IDIn,LocationIn);
+        end
+    end
+    
+end
+

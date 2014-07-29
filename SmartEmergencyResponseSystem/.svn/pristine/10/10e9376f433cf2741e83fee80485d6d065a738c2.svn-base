@@ -1,0 +1,12 @@
+function arms_rc_properties_callback(u)
+%Could be more general 'properties callback'
+    nrV = size(u,1);
+
+    ustrVis = ['[' num2str(u(1), '%0.9e')];
+    for i=2:nrV ustrVis = [ustrVis ';' num2str(u(i), '%0.9e')]; end
+    ustrVis = [ustrVis '];'];
+
+    evalStr = ['rc_vis = ' ustrVis '; arms_update_properties;'];
+    evalin('base', evalStr);
+end
+

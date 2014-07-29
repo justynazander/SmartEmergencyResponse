@@ -1,0 +1,9 @@
+function arms_teleport_to_callback(u)
+    [ustrLat, ustrLon, ustrAlt, ustrHead] = stringifyU(u);
+
+    evalStr = ['la_lat = ' ustrLat '; la_lon = ' ustrLon '; la_alt = '  ustrAlt '; la_head = ' ustrHead ';'];
+    evalin('base', evalStr);
+    evalCmd = 'teleportTo(la_lat, la_lon, la_alt, la_head)';
+    evalin('base', ['handles.myDoc.parentWindow.execScript(' evalCmd ')']);
+end
+

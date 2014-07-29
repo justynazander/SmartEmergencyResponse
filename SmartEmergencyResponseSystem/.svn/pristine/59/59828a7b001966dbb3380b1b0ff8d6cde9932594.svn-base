@@ -1,0 +1,76 @@
+classdef GeCommunicator < handle
+    %   This class contains ports to send position of the fleet to the 
+    %   GEInterface. It has listeners for the positions of the fleet and
+    %   sends them via respective UDP ports to the 
+    
+    properties (Access = protected)
+       
+        
+        VC; %Structure with the count of all vehicles
+    end
+    
+    methods
+        function obj = GeCommunicator()
+            
+            obj.VC = [];                                       
+            
+            GeManager();
+            listenVehicleCounts(obj, evalin('base', 'GV') , evalin('base', 'QC'), []);%evalin('base', 'FW'));
+        end
+        
+        function startUDP(obj)
+            
+            
+           
+            
+        end
+        
+        function delete(obj)
+            %fclose(obj.GVudp);
+            %fclose(obj.QCudp);
+            %fclose(obj.FWudp)
+            disp(obj);
+        end
+        
+        function listenVehicleCounts(obj, objGV,objQC, objFW)           
+                        
+            obj.VC.GVcount = numel(getVehicles(objGV));
+            obj.VC.QCcount = numel(getVehicles(objQC));
+            %obj.VC.FWcount = numel(getVehicles(objFW));
+            
+            addlistener(objGV,'vehicleAdded',@(src,event,str)obj.GVcountCB(src,event,'A'));
+            addlistener(objQC,'vehicleAdded',@(src,event,str)obj.QCcountCB(src,event,'A'));
+            %addlistener(objFW,'vehicleAdded',@(src,event,str)obj.FWcountCB(src,event,'A'));
+            
+            addlistener(objGV,'vehicleRemoved',@(src,event,str)obj.GVcountCB(src,event,'R'));
+            addlistener(objQC,'vehicleRemoved',@(src,event,str)obj.QCcountCB(src,event,'R'));
+            %addlistener(objFW,'vehicleRemoved',@(src,event,str)obj.FWcountCB(src,event,'R'));
+        end
+        
+        function GVcountCB(obj,~,~, str)
+            if strcmp(str,'A') 
+                obj.VC.GVcount = obj.VC.GVcount + 1;
+            elseif strcmp(str,'R')
+                obj.VC.GVcount = obj.VC.GVcount - 1;
+            end
+        end
+        
+        function QCcountCB(obj,~,~, str)
+            if strcmp(str,'A') 
+                obj.VC.QCcount = obj.VC.QCcount + 1;
+            elseif strcmp(str,'R')
+                obj.VC.QCcount = obj.VC.QCcount - 1;
+            end
+        end
+        
+        function FWcountCB(obj,~,~, str)
+            if strcmp(str,'A') 
+                obj.VC.FWcount = obj.VC.FWcount + 1;
+            elseif strcmp(str,'R')
+                obj.VC.FWcount = obj.VC.FWcount - 1;
+            end
+        end
+    end
+    
+end
+

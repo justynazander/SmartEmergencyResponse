@@ -1,0 +1,18 @@
+classdef QuadCopter < Vehicle
+    %% Class representing a quadcopter drone
+    properties
+        capacity = 10   % How much can the quadcopter carry (weight)?
+        charge = 1      % Fraction of range remaining
+        maxRange = 100  % Distance drone can travel on full charge
+        cargo = []      % Vector of Items that the quadcopter is carrying
+    end
+    
+    methods
+        function obj = QuadCopter(IDIn,LocationIn)
+            obj = obj@Vehicle(IDIn,LocationIn);
+            obj.route = zeros(0,2);     % Set dimensionality of route
+        end
+    end
+    
+end
+

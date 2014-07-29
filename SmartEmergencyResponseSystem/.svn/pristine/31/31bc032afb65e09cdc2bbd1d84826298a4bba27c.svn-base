@@ -1,0 +1,42 @@
+classdef Biobot < ConnectedVehicle
+    %% It's a dog.  With sensors.
+    %  Still need to clarify whether data from multiple sensors is getting 
+    %  sent to the same port
+    properties (Access = private)
+        % Configurable properties to be agreed on with NCSU
+        %GPSipAddress = '172.28.208.200'
+        GPSipAddress = '127.0.0.1'
+        GPSportNumber = 9527
+        
+        %sensoripAddress = '172.28.208.200'
+        sensoripAddress = '127.0.0.1'
+        sensorPortNumber = 9528
+        
+        % Other properties
+        GPS
+        sensors
+        datagramListener
+    end
+    
+    methods
+        function obj = Biobot(portIn,IDIn,LocationIn)
+            obj = obj@ConnectedVehicle(portIn,IDIn,LocationIn);
+            obj.GPS = GPSConnection(obj.GPSipAddress,obj.GPSportNumber);
+            obj.sensors = SensorConnection(obj.sensoripAddress,obj.sensorPortNumber);
+            obj.datagramListener = addlistener(obj.GPS,'validDatagramReceived',@obj.unpackDatagram);
+        end
+        
+        function delete(obj)
+            delete(obj.datagramListener);
+            delete(obj.GPS);
+            delete(obj.sensors);
+        end
+    end
+    
+    methods (Access = private)
+        function unpackDatagram(obj,~,~)
+            obj.location = [obj.GPS.lastValidData.latitude obj.GPS.lastValidData.longitude];
+        end
+    end
+end
+

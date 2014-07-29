@@ -1,0 +1,89 @@
+disp('If Google Earth does not load but the plugin is installed');
+disp('you may have to run a 32 bit version of MATLAB.');
+myEarth = arms_gui_v1;
+
+pause(2);
+
+handles = guidata(myEarth);
+
+%%default values
+lat = 37.798889;
+lon = -122.443889;
+alt = 0;
+head = 0;
+tilt = 70;
+roll = 0;
+range = 5;
+
+gv_lat = [37.798889; 37.798889];
+gv_lon = [-122.443889; -122.443889];
+gv_alt = [0; 0; 0];
+gv_head = [0; 0];
+gv_tilt = [0; 0];
+gv_roll = [0; 0];
+
+fw_lat = [37.798889; 37.798889];
+fw_lon = [-122.443889; -122.443889];
+fw_alt = [0; 0; 0];
+fw_head = [0; 0];
+fw_tilt = [0; 0];
+fw_roll = [0; 0];
+
+rc_lat = [37.798889; 37.798889; 37.798889];
+rc_lon = [-122.443889; -122.443889; -122.443889];
+rc_alt = [0; 0; 0];
+rc_head = [0; 0; 0];
+rc_tilt = [0; 0; 0];
+rc_roll = [0; 0; 0];
+
+la_lat = [37.798889];
+la_lon = [-122.443889];
+la_alt = [0];
+la_head = [0];
+la_tilt = [70];
+la_range = [5];
+la_mode = [0];
+
+
+%%
+config;
+
+%% Setup Google Earth
+
+handles.myDoc.parentWindow.execScript( ...
+    ['addLaView(' num2str(la_range) ',' num2str(la_tilt) ',' num2str(la_alt) ',' num2str(la_head) ')'], 'Jscript');
+%handles.myDoc.parentWindow.execScript('moveFullLaView(0,[37.789817],[-122.399322],[60],[225],[40],[10])', 'Jscript');
+handles.myDoc.parentWindow.execScript(['teleportTo(' num2str(la_lat) ',' num2str(la_lon) ',' num2str(la_head) ')'], 'Jscript');
+
+for i=1:GVFleet.nGV
+    handles.myDoc.parentWindow.execScript(['addGroundVehicle()'], 'Jscript');
+    handles.myDoc.parentWindow.execScript( ...
+        ['addGVModel(' num2str(lat) ',' num2str(lon) ',' num2str(head) ')'], 'Jscript');
+end
+
+for i=1:PRFleet.nPR
+    handles.myDoc.parentWindow.execScript(['addPerson()'], 'Jscript');
+    handles.myDoc.parentWindow.execScript( ...
+        ['addPRModel(' num2str(lat) ',' num2str(lon) ',' num2str(head) ')'], 'Jscript');
+end
+%handles.myDoc.parentWindow.execScript( ...
+%    ['movePR([37.78979],[-122.399322],[57.3],[180])'], 'Jscript');
+
+for i=1:RCFleet.nRC
+    handles.myDoc.parentWindow.execScript(['addRotorCraftVehicle()'], 'Jscript');
+    handles.myDoc.parentWindow.execScript( ...
+        ['addRCModel(' num2str(lat) ',' num2str(lon) ',' num2str(head) ')'], 'Jscript');
+end
+
+for i=1:ARFleet.nAR
+    handles.myDoc.parentWindow.execScript(['addArDroneVehicle()'], 'Jscript');
+    handles.myDoc.parentWindow.execScript( ...
+        ['addARModel(' num2str(lat) ',' num2str(lon) ',' num2str(head) ')'], 'Jscript');
+end
+
+for i=1:FWFleet.nFW
+    handles.myDoc.parentWindow.execScript(['addFixedWingVehicle()'], 'Jscript');
+    handles.myDoc.parentWindow.execScript( ...
+        ['addFWModel(' num2str(lat) ',' num2str(lon) ',' num2str(head) ')'], 'Jscript');
+end
+

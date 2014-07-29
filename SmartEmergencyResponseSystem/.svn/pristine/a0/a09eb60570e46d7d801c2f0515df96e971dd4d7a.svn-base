@@ -1,0 +1,13 @@
+classdef AtlasSprite < VehicleSprite
+    %ATLASSPRITE Summary of this class goes here
+    methods
+        function obj = AtlasSprite(axesIn, AtlasIn)
+            [imageData, ~, ~] = imread('atlas.jpg');
+            alphaData = uint8(sum(imageData,3) < 750)*255;
+            obj = obj@VehicleSprite(axesIn, imageData, alphaData, AtlasIn);
+            obj.setScale(0.8);
+        end
+    end
+    
+end
+

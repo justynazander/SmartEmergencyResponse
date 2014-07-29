@@ -1,0 +1,134 @@
+classdef Simulator < handle
+    %SIMULATOR Summary of this class goes here
+    %   Detailed explanation goes here
+    
+    properties (SetAccess = private, GetAccess = private)
+        GroundVehicles
+        Quadcopters
+        Requests
+        simdt
+    end
+    
+    methods
+        function obj = Simulator(AssetManager,RequestManager,simdt)
+            obj.GroundVehicles = AssetManager{1};
+            obj.Quadcopters = AssetManager{2};
+            obj.Requests = RequestManager;
+            obj.simdt = simdt;
+        end
+        
+        function runSimulator(obj)
+            obj.simGroundVehicles(obj.GroundVehicles,obj.simdt);
+            obj.simQuadCopters(obj.Quadcopters,obj.Requests,obj.simdt);
+        end
+        
+        function setGVDependency(obj)
+            
+            qcVec = obj.Quadcopters.getVehicles();
+            gvVec = obj.GroundVehicles.getVehicles();
+            
+            for i = 1:length(qcVec)
+                
+                quadcopter = qcVec(i);
+                if (isempty(quadcopter.lockWaypoint))
+                    % Determine on which waypoints are GVs waiting for this quadcopter
+                    % Find and assign right properties for the quad and corresponding
+                    
+                    plannedRoute = quadcopter.getRoute();
+                    
+                    % Initialize field in Quadcopter object
+                    quadcopter.lockWaypoint = zeros(size(plannedRoute,1),1);
+                    quadcopter.waitingGV = cell(size(plannedRoute,1),1);
+                    
+                    for j = 1:length(gvVec)
+                        
+                        % find does not work because waypointTargets is a cell
+                        % array
+                        lockWaypointInd = [];
+                        for k = 1:length(quadcopter.waypointTargets)
+                            if (quadcopter.waypointTargets{k} == gvVec(j))
+                                lockWaypointInd = k;
+                            end
+                        end
+                        
+                        if (~isempty(lockWaypointInd))
+                            quadcopter.lockWaypoint(lockWaypointInd) = 1;
+                            quadcopter.waitingGV{lockWaypointInd} = gvVec(j);
+                            gvVec(j).isWaitingForQuad = gvVec(j).isWaitingForQuad+1;
+                        end
+                        
+                    end
+                end
+            end
+        end
+    end
+    
+    methods(Static)
+        function simQuadCopters(QCManager,ReqManager,simdt)
+            qcVec = QCManager.getVehicles();
+            
+            % Loop over all Quadcopters
+            for i = 1:length(qcVec)
+                
+                quadcopter = qcVec(i);
+                plannedRoute = quadcopter.getRoute();
+                
+                if (size(plannedRoute,1)>1) % Keep navigating until there is atleast one more target
+                    targetLoc = plannedRoute(2,:);
+                    speed = quadcopter.speed;
+                    % Check if quad is close enough to the waypoint to reach in one step
+                    if (norm(quadcopter.location - targetLoc)<speed*simdt)
+                        quadcopter.location = targetLoc;    % In this step quad reaches the waypoint
+                        quadcopter.waypointReached(ReqManager);         % It covered one more waypoint
+                          
+                        % Check if this waypoint was locked, if yes, let the GV know
+                        % that Quad is done
+                        lockReleaseidx = quadcopter.nWaypointsCovered;
+                        if (quadcopter.lockWaypoint(lockReleaseidx))
+                            quadcopter.waitingGV{lockReleaseidx}.isWaitingForQuad = quadcopter.waitingGV{lockReleaseidx}.isWaitingForQuad - 1;
+                            % Also check if Quad is done with it's route
+                            % and needs to ride on the GV
+                            if (size(quadcopter.getRoute(),1)==1) % This is the last waypoint
+                                quadcopter.waitingGV{lockReleaseidx}.addCargo(quadcopter);
+                                % QCManager.removeVehicle(i); This step is
+                                % causing the TimerFcn to error
+                            end
+                        end
+                    else
+                        % Move the quad by one time step in the correct direction
+                        currLoc = quadcopter.location;
+                        heading = atan2(targetLoc(1)-currLoc(1),targetLoc(2)-currLoc(2));
+                        quadcopter.location = currLoc + speed*simdt*[sin(heading) cos(heading)];
+                    end
+                end
+            end
+        end
+        
+        function simGroundVehicles(GVManager,simdt)
+            gvVec = GVManager.getVehicles();
+            % Loop over all ground Vehicles and simulate
+            for i = 1:length(gvVec)
+                groundVehicle = gvVec(i);
+                plannedRoute = groundVehicle.getRoute();
+                
+                if (size(plannedRoute,1)>1 && groundVehicle.isWaitingForQuad == 0) % Keep navigating until the GV reaches the final waypoint
+                    targetLoc = plannedRoute(2,:);
+                    speed = groundVehicle.speed;
+                    % Check if GV is close enough to the waypoint to reach in one step
+                    if (norm(groundVehicle.location - targetLoc)<speed*simdt)
+                        groundVehicle.moveTo(targetLoc); % In this step quad reaches the waypoint
+                        groundVehicle.waypointReached();
+                    else
+                        % Move the quad by one time step in the correct direction
+                        currLoc = groundVehicle.location;
+                        heading = atan2(targetLoc(1)-currLoc(1),targetLoc(2)-currLoc(2));
+                        groundVehicle.moveTo(currLoc + speed*simdt*[sin(heading) cos(heading)]);
+                    end
+                end
+            end
+        end
+        
+    end
+    
+end
+

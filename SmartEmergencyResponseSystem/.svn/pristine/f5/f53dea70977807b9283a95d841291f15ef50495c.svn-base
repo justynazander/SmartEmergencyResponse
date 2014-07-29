@@ -1,0 +1,15 @@
+classdef BiobotSprite < VehicleSprite
+    %BIOBOTSPRITE Class depticting a dog.
+    
+    methods
+        function obj = BiobotSprite(axesIn,biobotIn)
+            [imageData, ~, ~] = imread('angry_dog.png');
+            alphaData = uint8(sum(imageData,3) < 750)*255;
+            obj = obj@VehicleSprite(axesIn, imageData, alphaData, biobotIn);
+            
+            obj.setScale(.2);
+        end
+    end
+    
+end
+

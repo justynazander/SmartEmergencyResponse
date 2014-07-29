@@ -37,9 +37,9 @@ The SERS system provides the survivors and the emergency personnel with informat
 <hr> Prerequisites: 
 ===========================================
      Google Earth. 
-===========================================
      MATLAB version 2014a, 32 bits.
 ===========================================
+
  
 
 <hr> 

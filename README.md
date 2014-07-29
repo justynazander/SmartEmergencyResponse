@@ -12,22 +12,25 @@ The system provides the survivors and the emergency personnel with information t
 SERS on YouTube: https://www.youtube.com/watch?v=oofHMaEWwP8
 
 Products used in SERS: 
+
 1. MATLAB
+
 2. Simulink
+
 3. Stateflow
+
 4. Aerospace Blockset used in coordinate transformations in the mission planning phase and for visualizing the vehicle orientation during design and test.
+
 5. Real-Time Windows Target used for real time control of the AR.Drone directly from Simulink.
+
 6. Optimization Toolbox used for the emergency response mission optimization and for determining the waypoints for the fleet of vehicles.
+
 7. Bioinformatics Toolbox used for dynamic optimization. 
+
 8. Mapping Toolbox used for reading the map shapefiles and pulling in the satellite images.
+
 9. Image Acquisition Toolbox used for face detection of the videostream from the AR.Drone.
 
-Special features used in SERS: 
-1. hg2 (open MATLAB using: matlab.exe -hgVersion 2)
-2. MILP optimization
-3. emulation of multiple threads
-4. "For Each" block in Simulink model
-5. MATLAB 14a, 32 bits
 
 SERS team member organizations: 
 BluHaptics,

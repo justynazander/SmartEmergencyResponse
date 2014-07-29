@@ -48,7 +48,7 @@ University of Washington,
 Worcester Polytechnic Institute.
  
 
-<br> 
+<hr> 
 SERS MathWorks development foundations: 
 Enes Bilgin (static optimization),
 David Escobar Sanabria (dynamic simulation),
@@ -57,8 +57,8 @@ Aubrey da Cunha (dynamic optimization),
 Poornima Kaniarasu (standalone GEarth interface),
 Pieter J. Mosterman,
 Justyna Zander.
-</br> 
 
+<hr> 
 Related technical papers, posters, talks, and books: 
 
 Justyna Zander, Smart Emergency Response System - Eye in the Sky, Plenary talk, SCS Summer Simulation Multi-Conference, July 2014.

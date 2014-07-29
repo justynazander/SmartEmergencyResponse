@@ -1,7 +1,7 @@
 SmartEmergencyResponse
 
 ======================================================
-= Smart Emergency Response System in MATLAB/Simulink =
+  Smart Emergency Response System in MATLAB/Simulink 
 ======================================================
 Smart Emergency Response System (SERS) prototype was built in the SmartAmerica Challenge 2013-2014, a US government initiative. SERS has been created by a team of nine organizations led by MathWorks. The project was featured at the White House in June 2014 and described by Todd Park (U.S. Chief Technology Officer) as an exemplary achievement.
 
@@ -26,17 +26,11 @@ Worcester Polytechnic Institute
 SERS MathWorks development foundations: 
 
 Enes Bilgin (static optimization)
-
 David Escobar Sanabria (dynamic simulation)
-
 Kun Zhang (GEarth, Kinec​t, gadgets, and apps)
-
 Aubrey da Cunha (dynamic optimization)
-
 Poornima Kaniarasu (standalone GEarth interface)
-
 Pieter J. Mosterman
-
 Justyna Zander ​
 
 

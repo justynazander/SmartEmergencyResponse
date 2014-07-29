@@ -1,5 +1,0 @@
-function arms_fw_callback( u )
-    [ustrLat, ustrLon, ustrAlt, ustrHead, ustrTilt, ustrRoll] = stringify6U(u);
-    evalin('base',['fw_lat = ' ustrLat '; fw_lon = ' ustrLon '; fw_alt = ' ustrAlt '; fw_head = ' ustrHead '; fw_tilt = ' ustrTilt '; fw_roll = ' ustrRoll ';']);
-end
-

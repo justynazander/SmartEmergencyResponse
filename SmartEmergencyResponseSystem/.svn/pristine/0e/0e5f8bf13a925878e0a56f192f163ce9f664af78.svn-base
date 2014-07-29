@@ -1,7 +1,0 @@
-%Set properties (visibility) for RC vehicle
-
-visA = ['[' num2bool(rc_vis(1))];
-for i=2:size(rc_vis) visA = [visA ',' num2bool(rc_vis(i))]; end
-visA = [visA ']'];
-
-handles.myDoc.parentWindow.execScript(['setRCProperties(' visA ')'], 'Jscript');

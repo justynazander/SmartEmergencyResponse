@@ -1,5 +1,0 @@
-function arms_rc_callback( u )
-    [ustrLat, ustrLon, ustrAlt, ustrHead, ustrTilt, ustrRoll] = stringify6U(u);
-    evalin('base', ['rc_lat = ' ustrLat '; rc_lon = ' ustrLon '; rc_alt = '  ustrAlt '; rc_head = ' ustrHead '; rc_tilt = ' ustrTilt '; rc_roll = ' ustrRoll ';']);
-end
-

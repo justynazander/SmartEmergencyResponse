@@ -1,2 +1,0 @@
-load Vnum
-GE = GeManager(nGV,nQC,nFW);

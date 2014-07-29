@@ -1,6 +1,0 @@
-function [ y ] = udp_util(nV)
-
-y = (nV==0)+(nV~=0)*nV;
-
-end
-

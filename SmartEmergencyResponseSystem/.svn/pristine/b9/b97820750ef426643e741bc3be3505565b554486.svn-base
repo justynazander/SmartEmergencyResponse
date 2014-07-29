@@ -1,6 +1,0 @@
-function arms_ar_callback( u )
-    [ustrLat, ustrLon, ustrAlt, ustrHead, ustrTilt, ustrRoll] = stringify6U(u);
-    evalStr = ['ar_lat = ' ustrLat '; ar_lon = ' ustrLon '; ar_alt = '  ustrAlt '; ar_head = ' ustrHead '; ar_tilt = ' ustrTilt '; ar_roll = ' ustrRoll ';'];
-    evalin('base', evalStr);
-end
-

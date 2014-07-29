@@ -1,6 +1,0 @@
-function arms_la_callback( u )
-    [ustrLat, ustrLon, ustrAlt, ustrMode, ustrHead, ustrTilt, ustrRange] = stringify7U(u);
-    evalStr = ['la_lat = ' ustrLat '; la_lon = ' ustrLon '; la_alt = '  ustrAlt '; la_mode = '  ustrMode '; la_heading = ' ustrHead '; la_tilt = ' ustrTilt '; la_range = ' ustrRange ';'];
-    evalin('base', evalStr);
-end
-

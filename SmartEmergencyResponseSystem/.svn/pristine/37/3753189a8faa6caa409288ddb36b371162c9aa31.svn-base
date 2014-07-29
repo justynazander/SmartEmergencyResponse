@@ -1,8 +1,0 @@
-d = EventDispatcher('127.0.0.1',9527);
-
-loc = [-122.4,37.8];
-while true
-    d.dispatch(sprintf('1,123456,%f7,%f7,%f7',10*rand,loc(1),loc(2)));
-    loc = loc + .0005*randn(1,2);
-    pause(.1)
-end

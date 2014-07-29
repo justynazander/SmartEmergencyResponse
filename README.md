@@ -1,6 +1,6 @@
-===========================================
-     Smart Emergency Response System  
-===========================================
+========================================
+   Smart Emergency Response System  
+========================================
 Smart Emergency Response System (SERS) prototype was built in the SmartAmerica Challenge 2013-2014, a US government initiative. SERS has been created by a team of nine organizations led by MathWorks. The project was featured at the White House in June 2014 and described by Todd Park (U.S. Chief Technology Officer) as an exemplary achievement.
 
 The SmartAmerica initiative challenges the participants to build cyber-physical systems as a glimpse of the future to save lives, create jobs, foster businesses, and improv​e the economy. SERS primarily saves lives.

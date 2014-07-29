@@ -11,13 +11,13 @@ The system provides the survivors and the emergency personnel with information t
 
 SERS on YouTube: https://www.youtube.com/watch?v=oofHMaEWwP8
 
-Products used in SERS: 
+MathWorks products used in SERS: 
 
-1. MATLAB
+1. MATLAB.
 
-2. Simulink
+2. Simulink for simulation of the fleet of vehicles and for communication.
 
-3. Stateflow
+3. Stateflow for some fleet simulation parts.
 
 4. Aerospace Blockset used in coordinate transformations in the mission planning phase and for visualizing the vehicle orientation during design and test.
 
@@ -56,16 +56,16 @@ Justyna Zander.
 
 Related papers, posters, talks, and books: 
 
-Justyna Zander, Smart Emergency Response System - Eye in the Sky, Plenary talk, SCS Summer Simulation Multi-Conference, July 2014
+Justyna Zander, Smart Emergency Response System - Eye in the Sky, Plenary talk, SCS Summer Simulation Multi-Conference, July 2014.
 
-Pieter J. Mosterman, Justyna Zander, Ascension Vizinho-Coutry, Virtual and Physical Integration of Autonomous Vehicles for an Automated Humanitarian Mission, Poster at Complex Systems Design & Management Conference, 2014
+Pieter J. Mosterman, Justyna Zander, Ascension Vizinho-Coutry, Virtual and Physical Integration of Autonomous Vehicles for an Automated Humanitarian Mission, Poster at Complex Systems Design & Management Conference, 2014.
 
-Pieter J. Mosterman, David Escobar Sanabria, Enes Bilgin, Kun Zhang, Justyna Zander, "A Heterogeneous Fleet of Vehicles for Automated Humanitarian Missions," Computing in Science and Engineering, vol. 16, no. 3, pp. 90-95, May-June, 2014
+Pieter J. Mosterman, David Escobar Sanabria, Enes Bilgin, Kun Zhang, Justyna Zander, "A Heterogeneous Fleet of Vehicles for Automated Humanitarian Missions," Computing in Science and Engineering, vol. 16, no. 3, pp. 90-95, May-June, 2014.
 
-Justyna Zander and Pieter J. Mosterman, From Internet of Things through Computation of Things to a Prediction Engine - SmartAmerica Challenge 2013 Workshop at White House, Washington DC, Dec. 2013 (with Peter Norvig)
+Justyna Zander and Pieter J. Mosterman, From Internet of Things through Computation of Things to a Prediction Engine - SmartAmerica Challenge 2013 Workshop at White House, Washington DC, Dec. 2013 (with Peter Norvig).
 
-Pieter J. Mosterman, Enes Bilgin, David Escobar Sanabria, Kun Zhang, Justyna Zander, Autonomous Vehicles on a Humanitarian Mission - SmartAmerica Challenge 2013 Workshop at White House, Washington DC, Dec. 2013
+Pieter J. Mosterman, Enes Bilgin, David Escobar Sanabria, Kun Zhang, Justyna Zander, Autonomous Vehicles on a Humanitarian Mission - SmartAmerica Challenge 2013 Workshop at White House, Washington DC, Dec. 2013.
 
-Justyna Zander and Pieter J. Mosterman, Computation for Humanity—Information Technology to Advance Society, ISBN-10:1439883270, CRC Press/Taylor & Francis, Oct. 2013 
+Justyna Zander and Pieter J. Mosterman, Computation for Humanity—Information Technology to Advance Society, ISBN-10:1439883270, CRC Press/Taylor & Francis, Oct. 2013.
 
 

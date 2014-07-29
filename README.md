@@ -21,7 +21,7 @@ The SERS system provides the survivors and the emergency personnel with informat
 
 3. Stateflow for some fleet simulation parts.
 
-4. Aerospace Blockset used in coordinate transformations in the mission planning phase and for visualizing the vehicle orientation during design and test.
+4. Aerospace Blockset™​​ used in coordinate transformations in the mission planning phase and for visualizing the vehicle orientation during design and test.
 
 5. Real-Time Windows Target used for real time control of the AR.Drone directly from Simulink.
 

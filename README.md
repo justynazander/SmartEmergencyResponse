@@ -11,7 +11,9 @@ SERS on YouTube: https://www.youtube.com/watch?v=oofHMaEWwP8
    SERS with MATLAB/Simulink
 ===============================
 
-The SERS system provides the survivors and the emergency personnel with information to locate and assist each other during a disaster. SERS allows to submit help requests to a MATLAB-based mission center connecting first responders, apps, search-and-rescue dogs, a 6-feet-tall humanoid, robots, drones, and autonomous aircraft and ground vehicles. The command and control center optimizes the available resources to serve every incoming requests and generates an action plan for the mission. The Wi-Fi network is created on the fly by the drones equipped with antennas. In addition, the autonomous rotorcrafts, planes, and ground vehicles are simulated with Simulink and visualized in a 3D environment (Google Earth) to unlock the ability to observe the operations on a mass scale.
+===========================================
+     The SERS system provides the survivors and the emergency personnel with information to locate and assist each other during a disaster. SERS allows to submit help requests to a MATLAB-based mission center connecting first responders, apps, search-and-rescue dogs, a 6-feet-tall humanoid, robots, drones, and autonomous aircraft and ground vehicles. The command and control center optimizes the available resources to serve every incoming requests and generates an action plan for the mission. The Wi-Fi network is created on the fly by the drones equipped with antennas. In addition, the autonomous rotorcrafts, planes, and ground vehicles are simulated with Simulink and visualized in a 3D environment (Google Earth) to unlock the ability to observe the operations on a mass scale.
+===========================================
 
 <hr> MathWorks products used in SERS:
 

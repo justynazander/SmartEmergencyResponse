@@ -44,6 +44,7 @@ The SERS system provides the survivors and the emergency personnel with informat
 
 <hr> 
 SERS team member organizations: 
+<hr> 
 BluHaptics,
 Boeing (St. Louis and Seattle),
 MathWorks - Team Lead,
@@ -57,6 +58,7 @@ Worcester Polytechnic Institute.
 
 <hr> 
 SERS MathWorks development foundations: 
+<hr> 
 Enes Bilgin (static optimization),
 David Escobar Sanabria (dynamic simulation),
 Kun Zhang (GEarth, Kinec​t, gadgets, and apps),
@@ -67,7 +69,7 @@ Justyna Zander.
 
 <hr> 
 Related technical papers, posters, talks, and books: 
-
+<hr> 
 Justyna Zander, Smart Emergency Response System - Eye in the Sky, Plenary talk, SCS Summer Simulation Multi-Conference, July 2014.
 
 Pieter J. Mosterman, Justyna Zander, Ascension Vizinho-Coutry, Virtual and Physical Integration of Autonomous Vehicles for an Automated Humanitarian Mission, Poster at Complex Systems Design & Management Conference, 2014.

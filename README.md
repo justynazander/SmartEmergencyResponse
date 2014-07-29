@@ -9,7 +9,7 @@ The system provides the survivors and the emergency personnel with information t
 
 SERS on YouTube: https://www.youtube.com/watch?v=oofHMaEWwP8
 
-<br> MathWorks products used in SERS: </br>
+<hr> MathWorks products used in SERS: </hr>
 
 1. MATLAB.
 

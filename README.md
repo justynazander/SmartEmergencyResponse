@@ -28,6 +28,11 @@ MathWorks products used in SERS:
 8. Mapping Toolbox used for reading the map shapefiles and pulling in the satellite images.
 
 9. Image Acquisition Toolbox used for face detection of the videostream from the AR.Drone.
+ 
+
+Prerequisites: 
+Google Earth. 
+MATLAB version 2014a, 32 bits.
 
 
 SERS team member organizations: 

@@ -15,29 +15,33 @@ The SERS system provides the survivors and the emergency personnel with informat
 
 <hr> MathWorks products used in SERS:
 
-1. MATLAB.
+1. MATLAB®.
 
-2. Simulink for simulation of the fleet of vehicles and for communication.
+2. Simulink® for simulation of the fleet of vehicles and for communication.
 
-3. Stateflow for some fleet simulation parts.
+3. Stateflow® for some fleet simulation parts.
 
 4. Aerospace Blockset™​​ used in coordinate transformations in the mission planning phase and for visualizing the vehicle orientation during design and test.
 
-5. Real-Time Windows Target used for real time control of the AR.Drone directly from Simulink.
+5. Real-Time Windows Target™​​ used for real time control of the AR.Drone directly from Simulink.
 
-6. Optimization Toolbox used for the emergency response mission optimization and for determining the waypoints for the fleet of vehicles.
+6. Optimization Toolbox™​​ used for the emergency response mission optimization and for determining the waypoints for the fleet of vehicles.
 
-7. Bioinformatics Toolbox used for dynamic optimization. 
+7. Bioinformatics Toolbox™​​ used for dynamic optimization. 
 
-8. Mapping Toolbox used for reading the map shapefiles and pulling in the satellite images.
+8. Mapping Toolbox™​​ used for reading the map shapefiles and pulling in the satellite images.
 
-9. Image Acquisition Toolbox used for face detection of the videostream from the AR.Drone.
+9. Image Acquisition Toolbox™​​ used for face detection of the videostream from the AR.Drone.
 
 
 <hr> Prerequisites: 
 ===========================================
-     Google Earth. 
+     Google Earth™​​. 
      MATLAB version 2014a, 32 bits.
+     
+     Optional: 
+     Android™​
+     Google Glass™ 
 ===========================================
 
  

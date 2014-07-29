@@ -30,12 +30,12 @@ SERS on YouTube: https://www.youtube.com/watch?v=oofHMaEWwP8
 9. Image Acquisition Toolbox used for face detection of the videostream from the AR.Drone.
 
 
-<br> Prerequisites: 
+<hr> Prerequisites: 
 Google Earth. 
 MATLAB version 2014a, 32 bits.
-</br> 
+ 
 
-<br> 
+<hr> 
 SERS team member organizations: 
 BluHaptics,
 Boeing (St. Louis and Seattle),
@@ -46,7 +46,7 @@ North Carolina State University,
 University of North Texas, 
 University of Washington,
 Worcester Polytechnic Institute.
-</br> 
+ 
 
 <br> 
 SERS MathWorks development foundations: 

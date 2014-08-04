@@ -101,7 +101,7 @@ Related technical papers, posters, talks, and books:
 
 Copyright (c) 2014, The MathWorks, Inc. 
 ===========================================
-All rights reserved.
+Copyright notice: "Copyright (c) 2014, The MathWorks, Inc. All rights reserved."
 
 Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
 

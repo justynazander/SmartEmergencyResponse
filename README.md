@@ -52,15 +52,15 @@ Required software: MATLAB® (R2014a).
 <hr> 
 SERS team member organizations: 
 <hr> 
-BluHaptics,
-Boeing (St. Louis and Seattle),
-MathWorks - Team Lead,
-Massachusetts Institute of Technology Media Lab,
-National Instruments,
-North Carolina State University,
-University of North Texas, 
-University of Washington,
-Worcester Polytechnic Institute.
+- MathWorks - Team Lead,
+- BluHaptics,
+- Boeing (St. Louis and Seattle),
+- Massachusetts Institute of Technology Media Lab,
+- National Instruments,
+- North Carolina State University,
+- University of North Texas, 
+- University of Washington,
+- Worcester Polytechnic Institute.
  
 
 <hr> 

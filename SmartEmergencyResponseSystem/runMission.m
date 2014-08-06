@@ -1,3 +1,6 @@
+% ******************************************************************************
+% Copyright (c) 2014, The MathWorks, Inc. All rights reserved.
+
 function runMission
     
     imData = imread('Copy_of_SFHiRes.png');

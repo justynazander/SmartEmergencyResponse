@@ -8,7 +8,7 @@ The SmartAmerica initiative challenges the participants to build cyber-physical 
 - SERS on YouTube: https://www.youtube.com/watch?v=oofHMaEWwP8
 - SERS documentation: https://github.com/justynazander/SmartEmergencyResponse/tree/master/SmartEmergencyResponseSystem/doc 
 
-INCLUDES SIMULINKPROJECT 
+THIS BRANCH INCLUDES the concept of SimulinkProject.  
 
 ===============================
    SERS with MATLAB/Simulink

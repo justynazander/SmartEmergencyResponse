@@ -26,12 +26,14 @@
 * Justyna Zander (justyna.zander@gmail.com) 	     			     *
 * Pieter Mosterman (pieter.mosterman@mathworks.com)			     *
 ******************************************************************************
+Copyright (c) 2014, The MathWorks, Inc. All rights reserved.
+******************************************************************************
  
 How to run SERS in a loop mode. 
 *******************************
 
 
-Open 4 MATLAB sessions (32 bits, with ìmatlab.exe -hgVersion 2î). In each of them: 
+Open 4 MATLAB sessions (32 bits, with ‚Äúmatlab.exe -hgVersion 2‚Äù). In each of them: 
 - Command window: addpath(genpath(pwd))
 - Go to SERS folder 
  

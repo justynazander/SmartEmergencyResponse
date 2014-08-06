@@ -1,3 +1,6 @@
+% ******************************************************************************
+% Copyright (c) 2014, The MathWorks, Inc. All rights reserved.
+
 function demoMission
 %========================== Set up mission ================================     
     %imData = imread('SFHiRes.png');

@@ -29,6 +29,7 @@
 [projectRoot, hadToOpen] = set_up_SimulinkProject;
 
 %% SmartEmergencyResponseSystem
+hadToOpen = false;
 
 %% Initiate user specified workflow
 if not(hadToOpen)   % only initiate workflows if project was already open

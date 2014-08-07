@@ -33,7 +33,7 @@ How to run SERS in a loop mode.
 *******************************
 
 
-Open 4 MATLAB sessions (32 bits, with “matlab.exe -hgVersion 2”). In each of them: 
+Open 4 MATLAB sessions (with “matlab.exe -hgVersion 2”). In each of them: 
 - Command window: addpath(genpath(pwd))
 - Go to SERS folder 
  
@@ -42,10 +42,12 @@ Command window: y = QuadrotorOptimizationReceiptAdaptor('127.0.0.1',10020,10030)
  
 MATLAB session 2:
 Command window: GE = GeManager
+Comment: please notice that this session must run as MATLAB 32 bits, because only in this version Google Earth is supported. 
+If you do not have 32 bits version, please ignore this step. 
  
 MATLAB session 3:
 Command window: demoMission
-Alternatively:  demoMissionKinematics or demoMissionDynamics, or runMission
+Alternatively:  demoMissionKinematics, or demoMissionDynamics, or runMission
  
 MATLAB session 4: 
 Go to: [pwd '\requests'] 

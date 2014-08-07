@@ -29,9 +29,4 @@ Simulink.fileGenControl('set', 'CacheFolder', myCacheFolder, ...
 
 addpath(genpath([pwd '\SmartEmergencyResponseSystem']));
 
-% Set the path for this project:
-% folders = project_paths();
-% for jj=1:numel(folders)
-%     addpath( fullfile(projectRoot, folders{jj}) );
-% end
 end

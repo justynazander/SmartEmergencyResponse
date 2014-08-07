@@ -4,7 +4,7 @@ function [projectRoot, hadToOpen] = set_up_SimulinkProject()
 %   Set up the environment for the current project. This function is set to
 %   Run at Startup.
 
-%   Copyright 2011-2014 The MathWorks, Inc.
+%   Copyright 2014 The MathWorks, Inc.
 
 % Use Simulink Project API to get the current project:
 

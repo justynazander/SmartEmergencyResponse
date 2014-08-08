@@ -6,6 +6,7 @@ Smart Emergency Response System (SERS) prototype was built in the SmartAmerica C
 The SmartAmerica initiative challenges the participants to build cyber-physical systems as a glimpse of the future to save lives, create jobs, foster businesses, and improv​e the economy. SERS primarily saves lives.
 
 - SERS on YouTube: https://www.youtube.com/watch?v=oofHMaEWwP8
+- SERS news and logistics updates are here: https://sites.google.com/site/justynazander/sers
 - SERS documentation: https://github.com/justynazander/SmartEmergencyResponse/tree/master/SmartEmergencyResponseSystem/doc 
 
 INCLUDES SIMULINKPROJECT 

@@ -1,0 +1,125 @@
+<deployment-project plugin="plugin.apptool" plugin-version="1.0">
+  <configuration build-checksum="3143667980" file="C:\Users\jzander\Downloads\SERSfromGit\Smart Emergency Response System.prj" location="C:\Users\jzander\Downloads\SERSfromGit" name="Smart Emergency Response System" target="target.mlapps" target-name="Package App">
+    <param.appname>Smart Emergency Response System</param.appname>
+    <param.authnamewatermark>Smart Emergency Response System (SERS)</param.authnamewatermark>
+    <param.email>justyna.zander@gmail.com</param.email>
+    <param.company>MathWorks</param.company>
+    <param.icon />
+    <param.icons />
+    <param.summary>Smart Emergency Response System (SERS) prototype was built in the SmartAmerica Challenge 2013-2014, a US government initiative.</param.summary>
+    <param.description>SERS primarily saves lives. The system provides the survivors and the emergency personnel with information to locate and assist each other during a disaster. SERS allows to submit help requests to a MATLAB-based mission center connecting first responders, apps, search-and-rescue dogs, a 6-feet-tall humanoid, robots, drones, and autonomous aircraft and ground vehicles. The command and control center optimizes the available resources to serve every incoming requests and generates an action plan for the mission. The Wi-Fi network is created on the fly by the drones equipped with antennas. In addition, the autonomous rotorcrafts, planes, and ground vehicles are simulated with Simulink and visualized in a 3D environment (Google Earth) to unlock the ability to observe the operations on a mass scale.
+The Smart Emergency Response System built in MATLAB and Simulink is now available for download on GitHub: https://github.com/justynazander/SmartEmergencyResponse.
+The project was featured at the White House in June 2014 and described by Todd Park (U.S. Chief Technology Officer) as an exemplary achievement.</param.description>
+    <param.screenshot>C:\Users\jzander\Desktop\Andy\BigBlog\OptimizationTornado.jpg</param.screenshot>
+    <param.version>1.0</param.version>
+    <param.products.name>
+      <item>MATLAB</item>
+      <item>Bioinformatics Toolbox</item>
+      <item>Image Processing Toolbox</item>
+      <item>Instrument Control Toolbox</item>
+      <item>Mapping Toolbox</item>
+      <item>Optimization Toolbox</item>
+      <item>Simulink</item>
+      <item>Simulink Design Optimization</item>
+    </param.products.name>
+    <param.products.id>
+      <item>1</item>
+      <item>83</item>
+      <item>17</item>
+      <item>62</item>
+      <item>11</item>
+      <item>6</item>
+      <item>2</item>
+      <item>127</item>
+    </param.products.id>
+    <param.products.version>
+      <item>8.3</item>
+      <item>4.4</item>
+      <item>9.0</item>
+      <item>3.5</item>
+      <item>4.0.1</item>
+      <item>7.0</item>
+      <item>8.3</item>
+      <item>2.5</item>
+    </param.products.version>
+    <param.platforms />
+    <param.output>${PROJECT_ROOT}\Smart Emergency Response System.mlappinstall</param.output>
+    <param.guid>ce0e0707-127f-4f69-9b9d-b0c8dc8e0a9c</param.guid>
+    <unset>
+      <param.icon />
+      <param.icons />
+      <param.version />
+      <param.platforms />
+    </unset>
+    <fileset.main>
+      <file>${PROJECT_ROOT}\startSers.m</file>
+    </fileset.main>
+    <fileset.depfun />
+    <fileset.resources>
+      <file>${PROJECT_ROOT}\.git</file>
+      <file>${PROJECT_ROOT}\.gitattributes</file>
+      <file>${PROJECT_ROOT}\.gitignore</file>
+      <file>${PROJECT_ROOT}\.SimulinkProject</file>
+      <file>${PROJECT_ROOT}\Branch_SimulinkProject.md</file>
+      <file>${PROJECT_ROOT}\README.md</file>
+      <file>${PROJECT_ROOT}\SERSfromGit.prj</file>
+      <file>${PROJECT_ROOT}\set_up_SimulinkProject.m</file>
+      <file>${PROJECT_ROOT}\Smart Emergency Response System.prj</file>
+      <file>${PROJECT_ROOT}\SmartEmergencyResponseSystem</file>
+      <file>${PROJECT_ROOT}\startHere.asv</file>
+      <file>${PROJECT_ROOT}\startHere.m</file>
+      <file>${PROJECT_ROOT}\startSers.asv</file>
+      <file>${PROJECT_ROOT}\startSers.m</file>
+      <file>${PROJECT_ROOT}\work</file>
+    </fileset.resources>
+    <fileset.package />
+    <build-deliverables>
+      <file location="C:\Users\jzander\Downloads\SERSfromGit" name="Smart Emergency Response System.mlappinstall" optional="false">C:\Users\jzander\Downloads\SERSfromGit\Smart Emergency Response System.mlappinstall</file>
+    </build-deliverables>
+    <workflow />
+    <matlab>
+      <root>C:\Users\jzander\R2014a32bit</root>
+      <toolboxes>
+        <toolbox name="matlabhdlcoder" />
+        <toolbox name="fixedpoint" />
+        <toolbox name="embeddedcoder" />
+        <toolbox name="matlabcoder" />
+      </toolboxes>
+      <toolbox>
+        <matlabhdlcoder>
+          <enabled>true</enabled>
+        </matlabhdlcoder>
+      </toolbox>
+      <toolbox>
+        <fixedpoint>
+          <enabled>true</enabled>
+        </fixedpoint>
+      </toolbox>
+      <toolbox>
+        <embeddedcoder>
+          <enabled>true</enabled>
+        </embeddedcoder>
+      </toolbox>
+      <toolbox>
+        <matlabcoder>
+          <enabled>true</enabled>
+        </matlabcoder>
+      </toolbox>
+    </matlab>
+    <platform>
+      <unix>false</unix>
+      <mac>false</mac>
+      <windows>true</windows>
+      <win2k>false</win2k>
+      <winxp>false</winxp>
+      <vista>false</vista>
+      <linux>false</linux>
+      <solaris>false</solaris>
+      <osver>6.1</osver>
+      <os32>true</os32>
+      <os64>false</os64>
+      <arch>win32</arch>
+      <matlab>true</matlab>
+    </platform>
+  </configuration>
+</deployment-project>

@@ -108,7 +108,7 @@ How to run SERS using the apps?
 - Open two additional MATLABs.
 - Go to APPS tab in MATLAB in each of the MATLAB sessions​. 
 - Click the icons: 
-        'SERS server' app in the first MATLAB session.
+        ​'SERS server' app in the first MATLAB session.
         ​'SERS optimization' app in the second MATLAB session.  
         ​'SERS requests' app in the third MATLAB session.  
 

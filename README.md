@@ -100,7 +100,21 @@ Related technical papers, posters, talks, and books:
      Computation for Humanity—Information Technology to Advance Society, ISBN-10:1439883270, CRC Press/Taylor & Francis, Oct. 2013.
 ===========================================
 
+How to run SERS using the apps?
+===========================================
+- Open MATLAB.
+- Retrieve the repository from GitHub.
+- Install four MATLAB apps using the *.mlappinstall files from the main folder of the retrieved repository.
+- Open two additional MATLABs.
+- Go to APPS tab in MATLAB in each of the MATLAB sessions​. 
+- Click the icons: 
+        'SERS server' app in the first MATLAB session.
+        ​'SERS optimization' app in the second MATLAB session.  
+        ​'SERS requests' app in the third MATLAB session.  
 
+'SERS stop' app cleans up when you stop SERS functionalities in your MATLABs.
+
+===========================================
 Copyright (c) 2014, The MathWorks, Inc. 
 ===========================================
 Copyright notice: "Copyright (c) 2014, The MathWorks, Inc. All rights reserved."

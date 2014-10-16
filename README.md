@@ -75,6 +75,7 @@ David Escobar Sanabria (dynamic simulation),
 Kun Zhang (GEarth, Kinec​t, gadgets, and apps),
 Aubrey da Cunha (dynamic optimization),
 Poornima Kaniarasu (standalone GEarth interface),
+Srikanth Parupati (analysis of the videostream of the AR. Drone),
 Pieter J. Mosterman,
 Justyna Zander.
 

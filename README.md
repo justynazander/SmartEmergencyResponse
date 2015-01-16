@@ -115,6 +115,8 @@ How to run SERS using the apps?
      'SERS requests' app in the third MATLAB session.  
      'SERS stop' app cleans up when you stop SERS functionalities in your MATLABs.
 
+<hr> Citation: 
+===========================================
 @article{Justyna:13978,
       author        = "Justyna Zander",
       title         = "{SmartEmergencyResponse: SERS on ZENODO}",
@@ -123,6 +125,7 @@ How to run SERS using the apps?
       doi           = "{10.5281/zenodo.13978}",
       url           = "{http://dx.doi.org/10.5281/zenodo.13978}",
 }
+===========================================
 
 ===========================================
 Copyright (c) 2014, The MathWorks, Inc. 
